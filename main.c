@@ -10,7 +10,7 @@
 #define SAMPLE_VALUE_RANGE 50
 #define CONVERGE_RATE 0.0001
 #define ITERATION_NUMBER 1000
-// #define DEBUG
+//#define DEBUG
 
 /**
  *
@@ -106,10 +106,13 @@ int main() {
   }
   printf("\n");
 
+  clock_t start = clock(), diff;
   for (int i = 0; i < ITERATION_NUMBER; i++) {
     updateWeights(weights, x, y);
   }
-
+  diff = clock() - start;
+  int msec = diff * 1000 / CLOCKS_PER_SEC;
+  printf("Time taken: %d seconds %d milliseconds\n", msec / 1000, msec % 1000);
 #ifdef DEBUG
   for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER; i++) {
     printf("Benchmark weight: %lf Estimated weight:%lf\n", benchMarkWeights[i], weights[i]);
