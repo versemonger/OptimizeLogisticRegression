@@ -11,7 +11,7 @@
 #define CONVERGE_RATE 0.0001
 #define ITERATION_NUMBER 6000
 #define DATA_NUMBER 4
-#define DEBUG
+//#define DEBUG
 
 /**
  *

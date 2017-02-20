@@ -11,7 +11,7 @@
 #define CONVERGE_RATE 0.0001
 #define ITERATION_NUMBER 6000
 #define DATA_NUMBER 4
-#define DEBUG
+//#define DEBUG
 
 /**
  *
@@ -19,7 +19,7 @@
  * @param range Range of the numbers in the array is [0, range].
  * @return An array filled with random numbers.
  */
-float* generateRandomVectorfloat(int n, float range) {
+float* generateRandomVectorFloat(int n, float range) {
 
   float* ptr = (float*)aligned_alloc(16, sizeof(float) * n);
   if (ptr != NULL) {
@@ -57,17 +57,17 @@ float dotProduct(float* x, float* w, int n) {
 }
 
 
-float logisticFunction(float* x, float* w, int n) {
-  float sum = *w + dotProduct(x, w + 1, n);
+float logisticFunction(float* x, float* w, int n, float w0) {
+  float sum = w0+ dotProduct(x, w, n);
   return 1 / (1 + exp(sum));
 }
 
 
-void updateWeights(float* weights, float** x, float* y) {
+void updateWeights(float* weights, float** x, float* y, float w0) {
   float* difference = (float*)aligned_alloc(16, sizeof(float) * SAMPLE_NUMBER);
   // Calculate the difference according to logistic regression update formula
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    difference[i] = y[i] + logisticFunction(x[i], weights, SAMPLE_ATTRIBUTE_NUMBER) - 1;
+    difference[i] = y[i] + logisticFunction(x[i], weights, SAMPLE_ATTRIBUTE_NUMBER, w0) - 1;
   }
   // Calculate the delta vector according to the update formula
   float* delta = (float*)aligned_alloc(16, sizeof(float) * SAMPLE_ATTRIBUTE_NUMBER);
@@ -83,9 +83,11 @@ void updateWeights(float* weights, float** x, float* y) {
       deltaSSE[j] = _mm_add_ps(_mm_mul_ps(xiSSE[j], multiplier), deltaSSE[j]);
     }
   }
+
   // add delta to the original weights
-  for (int i = 1; i <= SAMPLE_ATTRIBUTE_NUMBER; i++) {
-    weights[i] += delta[i - 1];
+  __m128* weightsSSE = (__m128*)weights;
+  for (int i = 0; i <SAMPLE_ATTRIBUTE_NUMBER / DATA_NUMBER; i++) {
+    weightsSSE[i] = _mm_add_ps(weightsSSE[i], deltaSSE[i]);
   }
   free(delta);
 }
@@ -95,12 +97,13 @@ int main() {
   srand(time(NULL));
   clock_t start = clock(), diff;
   // initialize the weights randomly
-  float* weights = generateRandomVectorfloat(SAMPLE_ATTRIBUTE_NUMBER + 1, INITIAL_WEIGHTS_RANGE);
+  float w0 = (INITIAL_WEIGHTS_RANGE * rand() / RAND_MAX) - INITIAL_WEIGHTS_RANGE / 2;
+  float* weights = generateRandomVectorFloat(SAMPLE_ATTRIBUTE_NUMBER, INITIAL_WEIGHTS_RANGE);
   // TODO: load real data into x and y;
   // Generate random data for x
   float** x = (float**)malloc(SAMPLE_NUMBER * sizeof(float*));
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    x[i] = generateRandomVectorfloat(SAMPLE_ATTRIBUTE_NUMBER, SAMPLE_VALUE_RANGE);
+    x[i] = generateRandomVectorFloat(SAMPLE_ATTRIBUTE_NUMBER, SAMPLE_VALUE_RANGE);
   }
 
   // Set all benchmark weights as 0.5 or -0.5 randomly and generate the corresponding labels.
@@ -112,12 +115,12 @@ int main() {
     benchMarkWeights[i] = rand() % 2 - 0.5;
   }
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    y[i] = logisticFunction(x[i], benchMarkWeights, SAMPLE_ATTRIBUTE_NUMBER) > 0.5 ? 0 : 1;
+    y[i] = logisticFunction(x[i], benchMarkWeights + 1, SAMPLE_ATTRIBUTE_NUMBER, benchMarkWeights[0]) > 0.5 ? 0 : 1;
   }
 
 
   for (int i = 0; i < ITERATION_NUMBER; i++) {
-    updateWeights(weights, x, y);
+    updateWeights(weights, x, y, w0);
   }
 
 #ifdef DEBUG
@@ -128,7 +131,7 @@ int main() {
   // Predict the labels with weights estimated with logistic regression.
   float error = 0;
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    float predict = logisticFunction(x[i], weights, SAMPLE_ATTRIBUTE_NUMBER) > 0.5 ? 0 : 1;
+    float predict = logisticFunction(x[i], weights, SAMPLE_ATTRIBUTE_NUMBER, w0) > 0.5 ? 0 : 1;
 #ifdef DEBUG
     printf("y[%d]: %lf Predicted: %lf\n", i, y[i], predict);
 #endif
