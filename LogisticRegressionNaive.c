@@ -2,16 +2,16 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
-#include <x86intrin.h>
+
 
 #define SAMPLE_NUMBER 1024
 #define SAMPLE_ATTRIBUTE_NUMBER 32
 #define INITIAL_WEIGHTS_RANGE 0.01
 #define SAMPLE_VALUE_RANGE 50
 #define CONVERGE_RATE 0.0001
-#define ITERATION_NUMBER 2000
+#define ITERATION_NUMBER 6000
 #define DATA_NUMBER 4
-//#define DEBUG
+#define DEBUG
 
 /**
  *
@@ -21,7 +21,7 @@
  */
 float* generateRandomVectorfloat(int n, float range) {
 
-  float* ptr = (float*)aligned_alloc(16, sizeof(float) * n);
+  float* ptr = (float*)malloc(sizeof(float) * n);
   if (ptr != NULL) {
     for (int i = 0; i < n; i++) {
       ptr[i] =  (range * rand() / RAND_MAX) - range / 2;
@@ -50,9 +50,9 @@ float* generateRandomVectorBoolean(int n) {
  *  return dot product of vector x and w.
  */
 float dotProduct(float* x, float* w, int n) {
-  float dotProdcut = 0;
+  float dotProduct = 0;
   for (int i = 0; i < n; i++) {
-    dotProdcut += x[i] * w[i];
+    dotProduct += x[i] * w[i];
   }
 }
 
@@ -64,26 +64,24 @@ float logisticFunction(float* x, float* w, int n) {
 
 
 void updateWeights(float* weights, float** x, float* y) {
-  float* difference = (float*)aligned_alloc(16, sizeof(float) * SAMPLE_NUMBER);
+  float* difference = (float*)malloc(sizeof(float) * SAMPLE_NUMBER);
   // Calculate the difference according to logistic regression update formula
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
-      difference[i] = y[i] + logisticFunction(x[i], weights, SAMPLE_ATTRIBUTE_NUMBER) - 1;
+    difference[i] = y[i] + logisticFunction(x[i], weights, SAMPLE_ATTRIBUTE_NUMBER) - 1;
   }
   // Calculate the delta vector according to the update formula
-  float* delta = (float*)aligned_alloc(sizeof(float), 16);
-
-  __m128* deltaSSE = delta;
+  float* delta = (float*)calloc(SAMPLE_ATTRIBUTE_NUMBER, sizeof(float));
+  
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    __m128 *xiSSE = x[i];
-    const __m128 multiplier = (__m128)_mm_set1_pd(difference[i] * CONVERGE_RATE);
-    for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER / DATA_NUMBER; j++) {
-      deltaSSE[j] = _mm_add_ps(_mm_mul_ps(xiSSE[j], multiplier), deltaSSE[j]);
+    for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+      delta[j] += x[i][j] * CONVERGE_RATE * difference[i];
     }
   }
   // add delta to the original weights
   for (int i = 1; i <= SAMPLE_ATTRIBUTE_NUMBER; i++) {
     weights[i] += delta[i - 1];
   }
+  free(delta);
 }
 
 
@@ -110,8 +108,6 @@ int main() {
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
     y[i] = logisticFunction(x[i], benchMarkWeights, SAMPLE_ATTRIBUTE_NUMBER) > 0.5 ? 0 : 1;
   }
-  printf("\n");
-
 
   for (int i = 0; i < ITERATION_NUMBER; i++) {
     updateWeights(weights, x, y);
@@ -136,7 +132,8 @@ int main() {
   diff = clock() - start;
   int msec = diff * 1000 / CLOCKS_PER_SEC;
   printf("Time taken: %d seconds %d milliseconds\n", msec / 1000, msec % 1000);
-
+  free(weights);
+  free(x);
   return 0;
 }
 
