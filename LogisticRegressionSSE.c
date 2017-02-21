@@ -34,21 +34,6 @@ float* generateRandomVectorFloat(int n, float range) {
   return ptr;
 }
 
-/**
- *
- * @param n length of the vector; number of samples in this scenario.
- * @return a vector with values of randomly 1 or 0.
- */
-float* generateRandomVectorBoolean(int n) {
-  float* ptr = (float*)malloc(sizeof(float) * n);
-  if (ptr != NULL) {
-    for (int i = 0; i < n; i++) {
-      ptr[i] = rand() % 2;
-    }
-  }
-  return ptr;
-}
-
 
 /**
  *  return dot product of vector x and w.
