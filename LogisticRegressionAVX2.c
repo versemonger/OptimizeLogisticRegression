@@ -76,7 +76,7 @@ float logisticFunction(float* x, float* w, int n, float w0) {
   return 1 / (1 + exp(sum));
 }
 
-void updataDelta(__m256* deltaSSE, float** x, float* difference) {
+void updateDelta(__m256 *deltaSSE, float **x, float *difference) {
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
     __m256 *xiSSE = (__m256*)x[i];
     const __m256 multiplier = _mm256_set1_ps(difference[i] * CONVERGE_RATE);
@@ -108,7 +108,7 @@ void updateWeights(float* weights, float** x, float* y, float w0) {
     deltaSSE[i] = zeros;
   }
 
-  updataDelta(deltaSSE, x, difference);
+  updateDelta(deltaSSE, x, difference);
   // add delta to the original weights
   __m256* weightsSSE = (__m256*)weights;
   for (int i = 0; i <SAMPLE_ATTRIBUTE_NUMBER / DATA_NUMBER; i++) {
