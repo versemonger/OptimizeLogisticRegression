@@ -54,6 +54,7 @@ float dotProduct(float* x, float* w, int n) {
   for (int i = 0; i < n; i++) {
     dotProduct += x[i] * w[i];
   }
+  return dotProduct;
 }
 
 
@@ -109,6 +110,8 @@ int main() {
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
     y[i] = logisticFunction(x[i], benchMarkWeights, SAMPLE_ATTRIBUTE_NUMBER) > 0.5 ? 0 : 1;
   }
+
+
   clock_t start = clock(), diff;
   for (int i = 0; i < ITERATION_NUMBER; i++) {
     updateWeights(weights, x, y);
