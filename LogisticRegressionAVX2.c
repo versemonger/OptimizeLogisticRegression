@@ -1,3 +1,7 @@
+/*
+ * All changes to code are copyright, 2017, Zhu Li, zhuli@unm.edu
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
