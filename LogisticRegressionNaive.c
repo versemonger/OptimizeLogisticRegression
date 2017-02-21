@@ -82,6 +82,7 @@ void updateWeights(float* weights, float** x, float* y) {
     weights[i] += delta[i - 1];
   }
   free(delta);
+  free(difference);
 }
 
 
@@ -132,6 +133,9 @@ int main() {
   diff = clock() - start;
   int msec = diff * 1000 / CLOCKS_PER_SEC;
   printf("Time taken: %d seconds %d milliseconds\n", msec / 1000, msec % 1000);
+  for (int i = 0; i < SAMPLE_NUMBER; i++) {
+    free(x[i]);
+  }
   free(weights);
   free(x);
   return 0;
