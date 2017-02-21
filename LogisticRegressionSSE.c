@@ -76,6 +76,16 @@ float logisticFunction(float* x, float* w, int n, float w0) {
 }
 
 
+void updateDelta(__m128* deltaSSE, float** x, float* difference) {
+  for (int i = 0; i < SAMPLE_NUMBER; i++) {
+    __m128 *xiSSE = (__m128*)x[i];
+    const __m128 multiplier = _mm_set1_ps(difference[i] * CONVERGE_RATE);
+    for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER / DATA_NUMBER; j++) {
+      deltaSSE[j] = _mm_add_ps(_mm_mul_ps(xiSSE[j], multiplier), deltaSSE[j]);
+    }
+  }
+}
+
 void updateWeights(float* weights, float** x, float* y, float w0) {
 
   float* difference = (float*)aligned_alloc(16, sizeof(float) * SAMPLE_NUMBER);
@@ -97,13 +107,8 @@ void updateWeights(float* weights, float** x, float* y, float w0) {
   for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER / DATA_NUMBER; i++) {
     deltaSSE[i] = zeros;
   }
-  for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    __m128 *xiSSE = (__m128*)x[i];
-    const __m128 multiplier = _mm_set1_ps(difference[i] * CONVERGE_RATE);
-    for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER / DATA_NUMBER; j++) {
-      deltaSSE[j] = _mm_add_ps(_mm_mul_ps(xiSSE[j], multiplier), deltaSSE[j]);
-    }
-  }
+
+  updateDelta(deltaSSE, x, difference);
 
   // add delta to the original weights
   __m128* weightsSSE = (__m128*)weights;

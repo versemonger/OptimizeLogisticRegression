@@ -67,6 +67,13 @@ float logisticFunction(float* x, float* w, int n) {
   return 1 / (1 + exp(sum));
 }
 
+void updateDelta(float* delta, float** x, float* difference) {
+  for (int i = 0; i < SAMPLE_NUMBER; i++) {
+    for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+      delta[j] += x[i][j] * CONVERGE_RATE * difference[i];
+    }
+  }
+}
 
 void updateWeights(float* weights, float** x, float* y) {
   float* difference = (float*)malloc(sizeof(float) * SAMPLE_NUMBER);
@@ -76,12 +83,7 @@ void updateWeights(float* weights, float** x, float* y) {
   }
   // Calculate the delta vector according to the update formula
   float* delta = (float*)calloc(SAMPLE_ATTRIBUTE_NUMBER, sizeof(float));
-  
-  for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
-      delta[j] += x[i][j] * CONVERGE_RATE * difference[i];
-    }
-  }
+  updateDelta(delta, x, difference);
   // add delta to the original weights
   for (int i = 1; i <= SAMPLE_ATTRIBUTE_NUMBER; i++) {
     weights[i] += delta[i - 1];
