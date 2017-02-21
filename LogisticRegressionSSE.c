@@ -77,7 +77,13 @@ void updateWeights(float* weights, float** x, float* y, float w0) {
   float* difference = (float*)aligned_alloc(16, sizeof(float) * SAMPLE_NUMBER);
   // Calculate the difference according to logistic regression update formula
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    difference[i] = y[i] + logisticFunction(x[i], weights, SAMPLE_ATTRIBUTE_NUMBER, w0) - 1;
+    difference[i] = logisticFunction(x[i], weights, SAMPLE_ATTRIBUTE_NUMBER, w0);
+  }
+  const __m128 minusOne = _mm_set1_ps(-1);
+  __m128* diffSSE = (__m128*)difference;
+  __m128* ySSE = (__m128*)y;
+  for (int i = 0; i < SAMPLE_NUMBER / DATA_NUMBER; i++) {
+    diffSSE[i] = _mm_add_ps(diffSSE[i], _mm_add_ps(ySSE[i], minusOne));
   }
 
   // Calculate the delta vector according to the update formula
