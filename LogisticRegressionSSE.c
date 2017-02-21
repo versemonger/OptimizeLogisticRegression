@@ -67,7 +67,7 @@ float dotProduct(float* x, float* w, int n) {
 
 
 float logisticFunction(float* x, float* w, int n, float w0) {
-  float sum = w0+ dotProduct(x, w, n);
+  float sum = w0 + dotProduct(x, w, n);
   return 1 / (1 + exp(sum));
 }
 
@@ -107,7 +107,6 @@ void updateWeights(float* weights, float** x, float* y, float w0) {
 
 int main() {
   srand(time(NULL));
-  clock_t start = clock(), diff;
   // initialize the weights randomly
   float w0 = (INITIAL_WEIGHTS_RANGE * rand() / RAND_MAX) - INITIAL_WEIGHTS_RANGE / 2;
   float* weights = generateRandomVectorFloat(SAMPLE_ATTRIBUTE_NUMBER, INITIAL_WEIGHTS_RANGE);
@@ -131,6 +130,8 @@ int main() {
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
     y[i] = logisticFunction(x[i], benchMarkWeights, SAMPLE_ATTRIBUTE_NUMBER, benchMarkWeight0) > 0.5 ? 0 : 1;
   }
+
+  clock_t start = clock(), diff;
   for (int i = 0; i < ITERATION_NUMBER; i++) {
     updateWeights(weights, x, y, w0);
   }

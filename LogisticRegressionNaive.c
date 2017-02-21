@@ -88,7 +88,7 @@ void updateWeights(float* weights, float** x, float* y) {
 
 int main() {
   srand(time(NULL));
-  clock_t start = clock(), diff;
+
   // initialize the weights randomly
   float* weights = generateRandomVectorfloat(SAMPLE_ATTRIBUTE_NUMBER + 1, INITIAL_WEIGHTS_RANGE);
   // TODO: load real data into x and y;
@@ -109,7 +109,7 @@ int main() {
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
     y[i] = logisticFunction(x[i], benchMarkWeights, SAMPLE_ATTRIBUTE_NUMBER) > 0.5 ? 0 : 1;
   }
-
+  clock_t start = clock(), diff;
   for (int i = 0; i < ITERATION_NUMBER; i++) {
     updateWeights(weights, x, y);
   }
