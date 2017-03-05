@@ -6,14 +6,15 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
+#include <sys/time.h>
 
-
-#define SAMPLE_NUMBER 1024
+#define MICROSEC_IN_SEC 1000000
+#define SAMPLE_NUMBER 1024 * 4
 #define SAMPLE_ATTRIBUTE_NUMBER 32
 #define INITIAL_WEIGHTS_RANGE 0.01
 #define SAMPLE_VALUE_RANGE 50
 #define CONVERGE_RATE 0.0001
-#define ITERATION_NUMBER 6000
+#define ITERATION_NUMBER 6000 * 2
 #define DATA_NUMBER 4
 //#define DEBUG
 
@@ -102,7 +103,9 @@ int main() {
   }
 
 
-  clock_t start = clock(), diff;
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  long start = tv.tv_usec + tv.tv_sec * MICROSEC_IN_SEC;
   for (int i = 0; i < ITERATION_NUMBER; i++) {
     updateWeights(weights, x, y);
   }
@@ -123,9 +126,9 @@ int main() {
   }
   printf("Average error:%lf\n", error / SAMPLE_NUMBER);
 
-  diff = clock() - start;
-  int msec = diff * 1000 / CLOCKS_PER_SEC;
-  printf("Time taken: %d seconds %d milliseconds\n", msec / 1000, msec % 1000);
+  gettimeofday(&tv, NULL);
+  long diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
+  printf("Time taken: %ld seconds %ld milliseconds\n", diff / 1000, diff % 1000);
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
     free(x[i]);
   }
