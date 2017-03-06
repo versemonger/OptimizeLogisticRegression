@@ -65,12 +65,13 @@ float logisticFunction(float* x, float* w, int n, float w0) {
 
 void updateDelta(__m256 *deltaSSE, float **x, float *difference, __m256* weightsSSE) {
   const __m256 zeros = _mm256_set1_ps(0);
+  float converge_rate = CONVERGE_RATE;
 #pragma omp parallel for schedule(static) num_threads(THREAD_NUMBER)
   for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER / DATA_NUMBER; j++) {
     deltaSSE[j] = zeros;
     for (int i = 0; i < SAMPLE_NUMBER; i++) {
       __m256 *xiSSE = (__m256*)x[i];
-      const __m256 multiplier = _mm256_set1_ps(difference[i] * CONVERGE_RATE);
+      const __m256 multiplier = _mm256_set1_ps(difference[i] * converge_rate);
       deltaSSE[j] = _mm256_fmadd_ps(xiSSE[j], multiplier, deltaSSE[j]);
     }
     weightsSSE[j] = _mm256_add_ps(weightsSSE[j], deltaSSE[j]);
@@ -164,6 +165,7 @@ int main() {
     free(x[i]);
   }
   free(x);
+  free(y);
   free(weights);
   free(benchMarkWeights);
   return 0;
