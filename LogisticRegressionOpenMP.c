@@ -63,18 +63,15 @@ float logisticFunction(float* x, float* w, int n, float w0) {
   return 1 / (1 + exp(sum));
 }
 
-void updateDelta(__m256 *deltaSSE, float **x, float *difference, __m256* weightsSSE) {
-  const __m256 zeros = _mm256_set1_ps(0);
+void updateDelta(float **x, float *difference, __m256* weightsSSE) {
   float converge_rate = CONVERGE_RATE;
 #pragma omp parallel for schedule(static) num_threads(THREAD_NUMBER)
   for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER / DATA_NUMBER; j++) {
-    deltaSSE[j] = zeros;
     for (int i = 0; i < SAMPLE_NUMBER; i++) {
       __m256 *xiSSE = (__m256*)x[i];
       const __m256 multiplier = _mm256_set1_ps(difference[i] * converge_rate);
-      deltaSSE[j] = _mm256_fmadd_ps(xiSSE[j], multiplier, deltaSSE[j]);
+      weightsSSE[j] = _mm256_fmadd_ps(xiSSE[j], multiplier, weightsSSE[j]);
     }
-    weightsSSE[j] = _mm256_add_ps(weightsSSE[j], deltaSSE[j]);
   }
 }
 
@@ -84,9 +81,6 @@ void updateWeights(float* weights, float** x, float* y, float w0) {
   const __m256 minusOne = _mm256_set1_ps(-1);
   __m256 *diffSSE = (__m256 *) difference;
   __m256 *ySSE = (__m256 *) y;
-  float *delta = (float *) aligned_alloc(BYTE_NUMBER, sizeof(float) * SAMPLE_ATTRIBUTE_NUMBER);
-  __m256 *deltaSSE = (__m256 *) delta;
-
   __m256* weightsSSE = (__m256*)weights;
 #pragma omp parallel num_threads(THREAD_NUMBER)
 {
@@ -101,10 +95,10 @@ void updateWeights(float* weights, float** x, float* y, float w0) {
     diffSSE[i] = _mm256_add_ps(diffSSE[i], _mm256_add_ps(ySSE[i], minusOne));
   }
 }
-  updateDelta(deltaSSE, x, difference, weightsSSE);
-  // add delta to the original weights
+  // update and add delta to the original weights
+  // function name is not changed for consistency
+  updateDelta(x, difference, weightsSSE);
   free(difference);
-  free(delta);
 }
 
 int main() {
