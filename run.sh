@@ -7,3 +7,5 @@ echo "AVX2 version"
 ./avx2
 echo "omp version"
 ./omp
+echo "mpi version"
+mpiexec ./mpi
