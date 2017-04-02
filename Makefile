@@ -6,7 +6,7 @@ SSEFLAG=-msse
 OMPFLAG=-fopenmp 
 CLINKS=-lm
 RM=/bin/rm -f
-all: naive sse avx2 omp omp-debug mpi
+all: naive sse avx2 omp omp-debug mpi mpisse
 naive: LogisticRegressionNaive.c
 	$(CC) $(CFLAGS) -o $@ LogisticRegressionNaive.c $(CLINKS)
 sse: LogisticRegressionSSE.c
@@ -19,5 +19,8 @@ omp-debug: LogisticRegressionOpenMP.c
 	$(CC) $(CFLAGS) $(AVXFLAG) $(OMPFLAG) -O3 -g -o $@ LogisticRegressionOpenMP.c $(CLINKS)
 mpi: LogisticRegressionMPI.c
 	$(MPICC) $(CFLAGS) $(AVXFLAG) $(OMPFLAG) -O3 -o $@ LogisticRegressionMPI.c $(CLINKS)
+mpisse: LogisticRegressionMPISSE.c
+	$(MPICC) $(CFLAGS) $(SSEFLAG) -O3 -o $@ LogisticRegressionMPISSE.c $(CLINKS)
+
 clean:
-	$(RM) naive sse avx2 omp omp-debug mpi
+	$(RM) naive sse avx2 omp omp-debug mpi mpisse
