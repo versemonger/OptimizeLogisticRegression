@@ -7,8 +7,11 @@
 #include <math.h>
 #include <time.h>
 #include <x86intrin.h>
+//#include <avxintrin.h>
 #include <mpi/mpi.h>
 #include <sys/time.h>
+//#include <fmaintrin.h>
+
 #define SAMPLE_NUMBER 1024 * 4
 #define SAMPLE_ATTRIBUTE_NUMBER 32
 #define INITIAL_WEIGHTS_RANGE 0.01
@@ -62,8 +65,7 @@ float dotProduct(float* x, float* w, int n) {
 
 
 float logisticFunction(float* x, float* w, int n, float w0) {
-  float sum = w0 + dotProduct(x, w, n);
-  return 1 / (1 + exp(sum));
+  return 1 / (1 + exp(w0 + dotProduct(x, w, n)));
 }
 
 void updateDelta(float **x, float *difference, __m256* weightsSSE) {
@@ -94,7 +96,7 @@ void updateWeights(float* weights, float** x, float* y, float w0) {
   int start = my_rank * splitSize;
   int end = start + splitSize;
   // Calculate the difference according to logistic regression update formula
-  for (int i = start; i <end; i++) {
+  for (int i = start; i < end; i++) {
     difference[i] = logisticFunction(x[i], weights, SAMPLE_ATTRIBUTE_NUMBER, w0);
   }
   for (int i = start / DATA_NUMBER; i < end / DATA_NUMBER; i++) {
