@@ -7,7 +7,6 @@
 #include <math.h>
 #include <time.h>
 #include <sys/time.h>
-#include <openacc.h>
 #define SAMPLE_NUMBER 1024 * 4
 #define SAMPLE_ATTRIBUTE_NUMBER 32 * 2
 #define INITIAL_WEIGHTS_RANGE 0.01
@@ -37,7 +36,6 @@ float* generateRandomVectorFloat(int n, float range) {
 /**
  *  return dot product of vector x and w.
  */
-#pragma acc routine
 float dotProduct(float* x, float* w, int n) {
   float sum = 0;
   for (int i = 0; i < n; i++) {
@@ -46,19 +44,19 @@ float dotProduct(float* x, float* w, int n) {
   return sum;
 }
 
-#pragma acc routine
+
 float logisticFunction(float* x, float* w, int n, float w0) {
   float sum = w0 + dotProduct(x, w, n);
   return 1 / (1 + exp(sum));
 }
 
-#pragma acc routine
+
 void updateWeights(float* weights, float** x, float* y, float w0, float* difference) {
-#pragma acc loop gang vector
+
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
     difference[i] = logisticFunction(x[i], weights, SAMPLE_ATTRIBUTE_NUMBER, w0) + y[i] - 1;
   }
-#pragma acc loop gang vector
+
   for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
     for (int i = 0; i < SAMPLE_NUMBER; i++) {
       weights[j] += x[i][j] * difference[i] * CONVERGE_RATE;
@@ -66,8 +64,40 @@ void updateWeights(float* weights, float** x, float* y, float w0, float* differe
   }
 }
 
+
+__global__ void calculate_difference(float* delta, float* difference, float* x, float* weights, float* w0, float* y) {
+  int i = blockDim.x * blockIdx.x + threadIdx.x;
+  difference[i] = logisticFunction(x + i * SAMPLE_ATTRIBUTE_NUMBER, weights, SAMPLE_ATTRIBUTE_NUMBER, *w0) + y[i] - 1;
+  int delta_index_start = i * SAMPLE_ATTRIBUTE_NUMBER;
+  for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+    *(delta + delta_index_start + j) = *(x + delta_index_start + j) * difference[i] * CONVERGE_RATE;
+  }
+}
+
+__global__ void reduce(float* delta, float* weights) {
+  int i = blockDim.x * blockIdx.x + threadIdx.x;
+  int delta_index_start = i * SAMPLE_ATTRIBUTE_NUMBER;
+  int sum_holder_limit = SAMPLE_NUMBER / 2;
+  int sum_stride = SAMPLE_NUMBER / 2;
+  while (sum_stride > 0) {
+    if (i >= sum_holder_limit) {
+      continue;
+    }
+    for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+      *(delta + i * SAMPLE_ATTRIBUTE_NUMBER + j) += *(delta + (i + sum_stride) * SAMPLE_ATTRIBUTE_NUMBER + j);
+    }
+    sum_holder_limit /= 2;
+    sum_stride /= 2;
+    __syncthreads();
+  }
+  if (i == 0){
+    for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+      weights[j] += delta[j];
+    }
+  }
+}
+
 int main() {
-  acc_set_device_num(5, acc_device_nvidia);
   srand(time(NULL));
   // initialize the weights randomly
   float w0 = (INITIAL_WEIGHTS_RANGE * rand() / RAND_MAX) - INITIAL_WEIGHTS_RANGE / 2;
@@ -96,17 +126,33 @@ int main() {
   gettimeofday(&tv, NULL);
   long start = tv.tv_usec + tv.tv_sec * MICROSEC_IN_SEC;
   //clock_t start = clock(), diff;
-  float *difference = (float *) malloc(sizeof(float) * SAMPLE_NUMBER);
-#pragma acc enter data copyin(weights[0:SAMPLE_ATTRIBUTE_NUMBER], x[0:SAMPLE_NUMBER][0:SAMPLE_ATTRIBUTE_NUMBER], y[0:SAMPLE_NUMBER], difference[0:SAMPLE_NUMBER])
-#pragma acc parallel vector_length(64) present(weights[0:SAMPLE_ATTRIBUTE_NUMBER], x[0:SAMPLE_NUMBER][0:SAMPLE_ATTRIBUTE_NUMBER], y[0:SAMPLE_NUMBER], difference[0:SAMPLE_NUMBER])
-  {
-    for (int i = 0; i < ITERATION_NUMBER; i++)
-    {
-      updateWeights(weights, x, y, w0, difference);
-    }
+  float *difference, *weight_device, *x_device, *y_device, *w0_device;// = (float *) malloc(sizeof(float) * SAMPLE_NUMBER);
+  cudaMalloc(&difference, SAMPLE_NUMBER * sizeof(float));
+  cudaMalloc(&weight_device, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float));
+  cudaMalloc(&delta_device, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER * sizeof(float));
+  cudaMalloc(&x_device, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER * sizeof(float));
+  cudaMalloc(&y_device, SAMPLE_NUMBER * sizeof(float));
+  cudaMalloc(&w0_device, sizeof(float));
+  for (int i = 0; i < SAMPLE_NUMBER; i++) {
+    cudaMemcpy(x_device + i * SAMPLE_ATTRIBUTE_NUMBER, x[i], SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
   }
-#pragma acc exit data copyout(weights[0:SAMPLE_ATTRIBUTE_NUMBER])
-  free(difference);
+  cudaMemcpy(w0_device, w0, cudaMemcpyHostToDevice);
+  cudaMemcpy(y_device, y, SAMPLE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(weight_device, weights, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
+
+  for (int k = 0; k < ITERATION_NUMBER; k++) {
+    calculate_difference<<<16,64>>>(delta_device, difference, x_device, weight_device, w0_device, y_device);
+    cudaStreamSynchronize();
+    reduce<<<16,64>>>(delta_device, weight_device);
+    cudaStreamSynchronize();
+  }
+  cudaMemcpy(weights, weight_device, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
+  cudaFree(x_device);
+  cudaFree(y_device);
+  cudaFree(weight_device);
+  cudaFree(difference);
+  cudaFree(w0_device);
+  //free(difference);
 
 
 #ifdef DEBUG
