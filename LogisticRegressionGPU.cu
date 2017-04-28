@@ -7,6 +7,7 @@
 #include <math.h>
 #include <time.h>
 #include <sys/time.h>
+#include <cuda.h>
 #define SAMPLE_NUMBER 1024 * 4
 #define SAMPLE_ATTRIBUTE_NUMBER 32 * 2
 #define INITIAL_WEIGHTS_RANGE 0.01
@@ -36,7 +37,7 @@ float* generateRandomVectorFloat(int n, float range) {
 /**
  *  return dot product of vector x and w.
  */
-float dotProduct(float* x, float* w, int n) {
+__host__ __device__ float dotProduct(float* x, float* w, int n) {
   float sum = 0;
   for (int i = 0; i < n; i++) {
     sum += x[i] * w[i];
@@ -45,7 +46,7 @@ float dotProduct(float* x, float* w, int n) {
 }
 
 
-float logisticFunction(float* x, float* w, int n, float w0) {
+__host__ __device__ float logisticFunction(float* x, float* w, int n, float w0) {
   float sum = w0 + dotProduct(x, w, n);
   return 1 / (1 + exp(sum));
 }
@@ -76,21 +77,19 @@ __global__ void calculate_difference(float* delta, float* difference, float* x, 
 
 __global__ void reduce(float* delta, float* weights) {
   int i = blockDim.x * blockIdx.x + threadIdx.x;
-  int delta_index_start = i * SAMPLE_ATTRIBUTE_NUMBER;
   int sum_holder_limit = SAMPLE_NUMBER / 2;
   int sum_stride = SAMPLE_NUMBER / 2;
   while (sum_stride > 0) {
-    if (i >= sum_holder_limit) {
-      continue;
-    }
-    for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
-      *(delta + i * SAMPLE_ATTRIBUTE_NUMBER + j) += *(delta + (i + sum_stride) * SAMPLE_ATTRIBUTE_NUMBER + j);
+    if (i < sum_holder_limit) {
+      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+        *(delta + i * SAMPLE_ATTRIBUTE_NUMBER + j) += *(delta + (i + sum_stride) * SAMPLE_ATTRIBUTE_NUMBER + j);
+      }
     }
     sum_holder_limit /= 2;
     sum_stride /= 2;
     __syncthreads();
   }
-  if (i == 0){
+  if (i == 0) {
     for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
       weights[j] += delta[j];
     }
@@ -105,10 +104,8 @@ int main() {
   // TODO: load real data into x and y;
   // Generate random data for x
 
-  float** x = (float**)malloc(SAMPLE_NUMBER * sizeof(float*));
-  for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    x[i] = generateRandomVectorFloat(SAMPLE_ATTRIBUTE_NUMBER, SAMPLE_VALUE_RANGE);
-  }
+  float* x = (float*)malloc(SAMPLE_NUMBER * SAMPLE_ATTRIBUTE_NUMBER * sizeof(float));
+  x = generateRandomVectorFloat(SAMPLE_NUMBER * SAMPLE_ATTRIBUTE_NUMBER, SAMPLE_VALUE_RANGE);
 
   // Set all benchmark weights as 0.5 or -0.5 randomly and generate the corresponding labels.
   // So we could test the effectiveness of the program according to whether
@@ -120,31 +117,31 @@ int main() {
     benchMarkWeights[i] = rand() % 2 - 0.5;
   }
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    y[i] = logisticFunction(x[i], benchMarkWeights, SAMPLE_ATTRIBUTE_NUMBER, benchMarkWeight0) > 0.5 ? 0 : 1;
+    y[i] = logisticFunction(x + i * SAMPLE_ATTRIBUTE_NUMBER, benchMarkWeights, SAMPLE_ATTRIBUTE_NUMBER, benchMarkWeight0) > 0.5 ? 0 : 1;
   }
   struct timeval tv;
   gettimeofday(&tv, NULL);
   long start = tv.tv_usec + tv.tv_sec * MICROSEC_IN_SEC;
   //clock_t start = clock(), diff;
-  float *difference, *weight_device, *x_device, *y_device, *w0_device;// = (float *) malloc(sizeof(float) * SAMPLE_NUMBER);
+  float *difference, *weight_device, *x_device, *y_device, *w0_device, *delta_device;// = (float *) malloc(sizeof(float) * SAMPLE_NUMBER);
+  printf("Start memory alloc\n");
   cudaMalloc(&difference, SAMPLE_NUMBER * sizeof(float));
   cudaMalloc(&weight_device, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float));
   cudaMalloc(&delta_device, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER * sizeof(float));
   cudaMalloc(&x_device, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER * sizeof(float));
   cudaMalloc(&y_device, SAMPLE_NUMBER * sizeof(float));
   cudaMalloc(&w0_device, sizeof(float));
-  for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    cudaMemcpy(x_device + i * SAMPLE_ATTRIBUTE_NUMBER, x[i], SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
-  }
-  cudaMemcpy(w0_device, w0, cudaMemcpyHostToDevice);
+  printf("Start memory copy\n");
+  cudaMemcpy(x_device, x, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
+
+  cudaMemcpy(w0_device, &w0, sizeof(float), cudaMemcpyHostToDevice);
   cudaMemcpy(y_device, y, SAMPLE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
   cudaMemcpy(weight_device, weights, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
-
   for (int k = 0; k < ITERATION_NUMBER; k++) {
     calculate_difference<<<16,64>>>(delta_device, difference, x_device, weight_device, w0_device, y_device);
-    cudaStreamSynchronize();
+    cudaDeviceSynchronize();
     reduce<<<16,64>>>(delta_device, weight_device);
-    cudaStreamSynchronize();
+    cudaDeviceSynchronize();
   }
   cudaMemcpy(weights, weight_device, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
   cudaFree(x_device);
@@ -152,9 +149,6 @@ int main() {
   cudaFree(weight_device);
   cudaFree(difference);
   cudaFree(w0_device);
-  //free(difference);
-
-
 #ifdef DEBUG
   for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER; i++) {
     printf("Benchmark weight: %lf Estimated weight:%lf\n", benchMarkWeights[i], weights[i]);
@@ -163,7 +157,7 @@ int main() {
   // Predict the labels with weights estimated with logistic regression.
   float error = 0;
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    float predict = logisticFunction(x[i], weights, SAMPLE_ATTRIBUTE_NUMBER, w0) > 0.5 ? 0 : 1;
+    float predict = logisticFunction(x + i * SAMPLE_ATTRIBUTE_NUMBER, weights, SAMPLE_ATTRIBUTE_NUMBER, w0) > 0.5 ? 0 : 1;
 #ifdef DEBUG
     printf("y[%d]: %lf Predicted: %lf\n", i, y[i], predict);
 #endif
@@ -175,9 +169,6 @@ int main() {
   gettimeofday(&tv, NULL);
   long diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
   printf("Time taken: %ld seconds %ld milliseconds\n", diff / 1000, diff % 1000);
-  for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    free(x[i]);
-  }
   free(x);
   free(y);
   free(weights);
