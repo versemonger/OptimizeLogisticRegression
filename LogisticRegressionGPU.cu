@@ -17,15 +17,15 @@
 #include <time.h>
 #include <sys/time.h>
 #include <cuda.h>
-#define SAMPLE_NUMBER 1024 * 4
-#define SAMPLE_ATTRIBUTE_NUMBER 32 * 2
+#define SAMPLE_NUMBER 2048
+#define SAMPLE_ATTRIBUTE_NUMBER 32
 #define INITIAL_WEIGHTS_RANGE 0.01
 #define SAMPLE_VALUE_RANGE 50
 #define CONVERGE_RATE 0.0001
-#define ITERATION_NUMBER 6000 * 2
+#define ITERATION_NUMBER 10000
 #define MICROSEC_IN_SEC 1000000
 
-//#define DEBUG
+#define DEBUG
 
 /**
  *
@@ -88,30 +88,6 @@ __global__ void copy_weight(float* weight_device, float* new_weights) {
     weight_device[i] = new_weights[i];
   }
 }
-__global__ void reduce(float* delta, float* weights) {
-  int i = blockDim.x * blockIdx.x + threadIdx.x;
-  int sum_holder_limit = SAMPLE_NUMBER / 2;
-  int sum_stride = SAMPLE_NUMBER / 2;
-  float* x = delta + i * SAMPLE_ATTRIBUTE_NUMBER;
-  while (sum_stride > 0) {
-    float* y = x + sum_stride * SAMPLE_ATTRIBUTE_NUMBER;
-    if (i < sum_holder_limit) {
-
-      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
-        *(x + j) += *(y + j);
-      }
-    }
-    sum_holder_limit /= 2;
-    sum_stride /= 2;
-    __syncthreads();
-  }
-  if (i == 0) {
-    for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
-      weights[j] += delta[j];
-    }
-  }
-}
-
 
 struct offset_pointers {
     __device__ float* operator()(int offset, float* delta) {
@@ -127,6 +103,14 @@ struct sum_delta {
       return x;
     }
 };
+
+void output_device_vector(float* x, int length) {
+  thrust::device_ptr<float> x_thr(x);
+  thrust::device_vector<float> x_vector(x_thr, x_thr + length);
+  thrust::copy(x_vector.begin(), x_vector.end(), std::ostream_iterator<float>(std::cout, "\t"));
+  printf("\n");
+}
+
 
 int main() {
 
@@ -165,27 +149,53 @@ int main() {
   cudaMalloc((void**)&y_device, SAMPLE_NUMBER * sizeof(float));
   cudaMalloc((void**)&w0_device, sizeof(float));
   printf("Start memory copy\n");
-  cudaMemcpy(x_device, x, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(x_device, x, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
 
   cudaMemcpy(w0_device, &w0, sizeof(float), cudaMemcpyHostToDevice);
   cudaMemcpy(y_device, y, SAMPLE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
   cudaMemcpy(weight_device, weights, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
   thrust::device_vector<int> offset(SAMPLE_NUMBER);
   thrust::sequence(offset.begin(), offset.end(), 0, SAMPLE_ATTRIBUTE_NUMBER);
-  thrust::copy(offset.begin(), offset.end(), std::ostream_iterator<int>(std::cout, "\n"));
+  //thrust::copy(offset.begin(), offset.end(), std::ostream_iterator<int>(std::cout, "\n"));
   thrust::device_vector<float*> delta_pointer(SAMPLE_NUMBER);
   thrust::fill(delta_pointer.begin(), delta_pointer.end(), delta_device);
   thrust::device_vector<float*> delta_pointers(SAMPLE_NUMBER);
   thrust::transform(offset.begin(), offset.end(), delta_pointer.begin(), delta_pointers.begin(), offset_pointers());
-  thrust::copy(delta_pointers.begin(), delta_pointers.end(), std::ostream_iterator<float*>(std::cout, "\n"));
-
+#ifdef DEBUG
+  printf("Original weights:\n");
+  output_device_vector(weight_device, SAMPLE_ATTRIBUTE_NUMBER);
+#endif
+  int block_number = SAMPLE_NUMBER / 64;
+  if (block_number == 0) {
+    block_number = 1;
+  }
+  int thread_number = SAMPLE_NUMBER;
+  if (thread_number > 64) {
+    thread_number = 64;
+  }
   for (int k = 0; k < ITERATION_NUMBER; k++) {
-    calculate_difference<<<16,64>>>(delta_device, difference, x_device, weight_device, w0_device, y_device);
+    calculate_difference<<<block_number,thread_number>>>(delta_device, difference, x_device, weight_device, w0_device, y_device);
     cudaDeviceSynchronize();
-     float* newWeight = thrust::reduce(delta_pointers.begin(), delta_pointers.end(), weight_device, sum_delta());
+#ifdef DEBUG
+    printf("x:\n");
+    output_device_vector(x, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER);
+    printf("Delta:\n");
+    output_device_vector(delta_device, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER);
+    printf("Difference:\n");
+    output_device_vector(difference, SAMPLE_NUMBER);
+#endif
+    float* newWeight = thrust::reduce(delta_pointers.begin(), delta_pointers.end(), weight_device, sum_delta());
     cudaDeviceSynchronize();
-    copy_weight<<<1, 64>>>(weight_device, newWeight);
+#ifdef DEBUG
+    printf("New weights:\n");
+    output_device_vector(newWeight, SAMPLE_ATTRIBUTE_NUMBER);
+#endif
+    copy_weight<<<1, SAMPLE_ATTRIBUTE_NUMBER>>>(weight_device, newWeight);
     cudaDeviceSynchronize();
+#ifdef DEBUG
+    printf("weight_device after update:\n");
+    output_device_vector(weight_device, SAMPLE_ATTRIBUTE_NUMBER);
+#endif
   }
   cudaMemcpy(weights, weight_device, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
   cudaFree(x_device);
@@ -207,9 +217,7 @@ int main() {
 #endif
     error += fabs(predict - y[i]);
   }
-  printf("Average error:%lf\n", error / SAMPLE_NUMBER);
-  //int diff = gettimeofday() - start;
-  //diff = clock() - start;
+  printf("Average error:%f\n", error / SAMPLE_NUMBER);
   gettimeofday(&tv, NULL);
   long diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
   printf("Time taken: %ld seconds %ld milliseconds\n", diff / 1000, diff % 1000);
