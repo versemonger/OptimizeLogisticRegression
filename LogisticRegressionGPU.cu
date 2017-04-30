@@ -22,10 +22,10 @@
 #define INITIAL_WEIGHTS_RANGE 0.01
 #define SAMPLE_VALUE_RANGE 50
 #define CONVERGE_RATE 0.0001
-#define ITERATION_NUMBER 10000
+#define ITERATION_NUMBER 12000
 #define MICROSEC_IN_SEC 1000000
 
-#define DEBUG
+//#define DEBUG
 
 /**
  *
@@ -43,6 +43,12 @@ float* generateRandomVectorFloat(int n, float range) {
   return ptr;
 }
 
+void output_device_vector(float* x, int length) {
+  thrust::device_ptr<float> x_thr(x);
+  thrust::device_vector<float> x_vector(x_thr, x_thr + length);
+  thrust::copy(x_vector.begin(), x_vector.end(), std::ostream_iterator<float>(std::cout, "\t"));
+  printf("\n");
+}
 /**
  *  return dot product of vector x and w.
  */
@@ -60,21 +66,6 @@ __host__ __device__ float logisticFunction(float* x, float* w, int n, float w0) 
   return 1 / (1 + exp(sum));
 }
 
-
-void updateWeights(float* weights, float** x, float* y, float w0, float* difference) {
-
-  for (int i = 0; i < SAMPLE_NUMBER; i++) {
-    difference[i] = logisticFunction(x[i], weights, SAMPLE_ATTRIBUTE_NUMBER, w0) + y[i] - 1;
-  }
-
-  for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
-    for (int i = 0; i < SAMPLE_NUMBER; i++) {
-      weights[j] += x[i][j] * difference[i] * CONVERGE_RATE;
-    }
-  }
-}
-
-
 __global__ void calculate_difference(float* delta, float* difference, float* x, float* weights, float* w0, float* y) {
   int i = blockDim.x * blockIdx.x + threadIdx.x;
   difference[i] = logisticFunction(x + i * SAMPLE_ATTRIBUTE_NUMBER, weights, SAMPLE_ATTRIBUTE_NUMBER, *w0) + y[i] - 1;
@@ -83,6 +74,7 @@ __global__ void calculate_difference(float* delta, float* difference, float* x, 
     *(delta + delta_index_start + j) = *(x + delta_index_start + j) * difference[i] * CONVERGE_RATE;
   }
 }
+
 __global__ void copy_weight(float* weight_device, float* new_weights) {
   for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER; i++) {
     weight_device[i] = new_weights[i];
@@ -104,12 +96,6 @@ struct sum_delta {
     }
 };
 
-void output_device_vector(float* x, int length) {
-  thrust::device_ptr<float> x_thr(x);
-  thrust::device_vector<float> x_vector(x_thr, x_thr + length);
-  thrust::copy(x_vector.begin(), x_vector.end(), std::ostream_iterator<float>(std::cout, "\t"));
-  printf("\n");
-}
 
 
 int main() {
@@ -173,9 +159,21 @@ int main() {
   if (thread_number > 64) {
     thread_number = 64;
   }
+
+  int block_number_weights = SAMPLE_ATTRIBUTE_NUMBER / 64;
+  if (block_number_weights == 0) {
+    block_number_weights = 1;
+  }
+  int thread_number_weights = SAMPLE_ATTRIBUTE_NUMBER;
+  if (thread_number_weights > 64) {
+    thread_number_weights = 64;
+  }
+
   for (int k = 0; k < ITERATION_NUMBER; k++) {
     calculate_difference<<<block_number,thread_number>>>(delta_device, difference, x_device, weight_device, w0_device, y_device);
     cudaDeviceSynchronize();
+    printf("weight_device after update:\n");
+    output_device_vector(weight_device, SAMPLE_ATTRIBUTE_NUMBER);
 #ifdef DEBUG
     printf("x:\n");
     output_device_vector(x, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER);
@@ -190,11 +188,12 @@ int main() {
     printf("New weights:\n");
     output_device_vector(newWeight, SAMPLE_ATTRIBUTE_NUMBER);
 #endif
-    copy_weight<<<1, SAMPLE_ATTRIBUTE_NUMBER>>>(weight_device, newWeight);
+    copy_weight<<<block_number_weights, thread_number_weights>>>(weight_device, newWeight);
     cudaDeviceSynchronize();
 #ifdef DEBUG
     printf("weight_device after update:\n");
     output_device_vector(weight_device, SAMPLE_ATTRIBUTE_NUMBER);
+    printf("\none cycle finished.\n\n\n");
 #endif
   }
   cudaMemcpy(weights, weight_device, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);

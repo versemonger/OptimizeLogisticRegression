@@ -24,6 +24,6 @@ mpi: LogisticRegressionMPI.c
 mpisse: LogisticRegressionMPISSE.c
 	$(MPICC) $(CFLAGS) $(SSEFLAG) -O3 -o $@ LogisticRegressionMPISSE.c $(CLINKS)
 gpu: LogisticRegressionGPU.cu
-	nvcc -o gpu LogisticRegressionGPU.cu
+	nvcc -o gpu -ftz=true LogisticRegressionGPU.cu
 clean:
 	$(RM) naive sse avx2 omp omp-debug mpi mpisse gpu
