@@ -17,15 +17,15 @@
 #include <time.h>
 #include <sys/time.h>
 #include <cuda.h>
-#define SAMPLE_NUMBER 2048
+#define SAMPLE_NUMBER (1024*8)
 #define SAMPLE_ATTRIBUTE_NUMBER 32
 #define INITIAL_WEIGHTS_RANGE 0.01
 #define SAMPLE_VALUE_RANGE 50
 #define CONVERGE_RATE 0.0001
-#define ITERATION_NUMBER 12000
+#define ITERATION_NUMBER 10
 #define MICROSEC_IN_SEC 1000000
 
-//#define DEBUG
+#define DEBUG
 
 /**
  *
@@ -71,7 +71,9 @@ __global__ void calculate_difference(float* delta, float* difference, float* x, 
   difference[i] = logisticFunction(x + i * SAMPLE_ATTRIBUTE_NUMBER, weights, SAMPLE_ATTRIBUTE_NUMBER, *w0) + y[i] - 1;
   int delta_index_start = i * SAMPLE_ATTRIBUTE_NUMBER;
   for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
-    *(delta + delta_index_start + j) = *(x + delta_index_start + j) * difference[i] * CONVERGE_RATE;
+    //TODO: modify this after debug
+    *(delta + delta_index_start + j) = 0.0001 * i;
+    //*(delta + delta_index_start + j) = *(x + delta_index_start + j) * difference[i] * CONVERGE_RATE;
   }
 }
 
@@ -104,8 +106,11 @@ int main() {
   // initialize the weights randomly
   float w0 = (INITIAL_WEIGHTS_RANGE * rand() / RAND_MAX) - INITIAL_WEIGHTS_RANGE / 2;
   float* weights = generateRandomVectorFloat(SAMPLE_ATTRIBUTE_NUMBER, INITIAL_WEIGHTS_RANGE);
-  // TODO: load real data into x and y;
-  // Generate random data for x
+  //TODO: delete this after debug
+  for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER; i++) {
+    weights[i] = 0;
+  }
+
 
   float* x = (float*)malloc(SAMPLE_NUMBER * SAMPLE_ATTRIBUTE_NUMBER * sizeof(float));
   x = generateRandomVectorFloat(SAMPLE_NUMBER * SAMPLE_ATTRIBUTE_NUMBER, SAMPLE_VALUE_RANGE);
@@ -172,8 +177,6 @@ int main() {
   for (int k = 0; k < ITERATION_NUMBER; k++) {
     calculate_difference<<<block_number,thread_number>>>(delta_device, difference, x_device, weight_device, w0_device, y_device);
     cudaDeviceSynchronize();
-    printf("weight_device after update:\n");
-    output_device_vector(weight_device, SAMPLE_ATTRIBUTE_NUMBER);
 #ifdef DEBUG
     printf("x:\n");
     output_device_vector(x, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER);
@@ -181,6 +184,11 @@ int main() {
     output_device_vector(delta_device, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER);
     printf("Difference:\n");
     output_device_vector(difference, SAMPLE_NUMBER);
+    for (int i = 0; i < 10; i++) {
+      printf("delta %d:\n", i);
+      output_device_vector(delta_pointers[i], SAMPLE_ATTRIBUTE_NUMBER);
+    }
+
 #endif
     float* newWeight = thrust::reduce(delta_pointers.begin(), delta_pointers.end(), weight_device, sum_delta());
     cudaDeviceSynchronize();
