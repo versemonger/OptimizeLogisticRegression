@@ -17,15 +17,16 @@
 #include <time.h>
 #include <sys/time.h>
 #include <cuda.h>
-#define SAMPLE_NUMBER (1024*8)
+#define THREAD_PER_BLOCK 512
+#define SAMPLE_NUMBER (1024 * 8)
 #define SAMPLE_ATTRIBUTE_NUMBER 32
 #define INITIAL_WEIGHTS_RANGE 0.01
 #define SAMPLE_VALUE_RANGE 50
 #define CONVERGE_RATE 0.0001
-#define ITERATION_NUMBER 10
+#define ITERATION_NUMBER 10000
 #define MICROSEC_IN_SEC 1000000
 
-#define DEBUG
+//#define DEBUG
 
 /**
  *
@@ -72,11 +73,43 @@ __global__ void calculate_difference(float* delta, float* difference, float* x, 
   int delta_index_start = i * SAMPLE_ATTRIBUTE_NUMBER;
   for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
     //TODO: modify this after debug
-    *(delta + delta_index_start + j) = 0.0001 * i;
-    //*(delta + delta_index_start + j) = *(x + delta_index_start + j) * difference[i] * CONVERGE_RATE;
+    //*(delta + delta_index_start + j) = 0.0001 * i;
+    *(delta + delta_index_start + j) = *(x + delta_index_start + j) * difference[i] * CONVERGE_RATE;
   }
 }
 
+__global__ void block_reduce(float *delta, float *weights, int block_number) {
+  int j = threadIdx.x;
+  for (int i = 0; i < block_number; i++) {
+    weights[j] += *(delta + i * SAMPLE_ATTRIBUTE_NUMBER + j);
+  }
+}
+
+__global__ void reduce(float* delta, float* weights_grid) {
+  int i = blockDim.x * blockIdx.x + threadIdx.x;
+  int tid = threadIdx.x;
+  int sum_holder_limit = blockDim.x / 2;
+  int sum_stride = blockDim.x / 2;
+  float* delta_temp = delta + i * SAMPLE_ATTRIBUTE_NUMBER;
+  while (sum_stride > 0) {
+    if (tid < sum_holder_limit) {
+      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+        *(delta_temp + j) += *(delta_temp + sum_stride * SAMPLE_ATTRIBUTE_NUMBER + j);
+      }
+    }
+    sum_holder_limit /= 2;
+    sum_stride /= 2;
+    __syncthreads();
+  }
+  if (tid == 0) {
+    int weight_start = blockIdx.x * SAMPLE_ATTRIBUTE_NUMBER;
+    int delta_start = blockDim.x * blockIdx.x * SAMPLE_ATTRIBUTE_NUMBER;
+    for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+      weights_grid[weight_start + j] += delta[delta_start + j];
+    }
+  }
+  __syncthreads();
+}
 
 
 __global__ void copy_weight(float* weight_device, float* new_weights) {
@@ -132,8 +165,25 @@ int main() {
   struct timeval tv;
   gettimeofday(&tv, NULL);
   long start = tv.tv_usec + tv.tv_sec * MICROSEC_IN_SEC;
-  //clock_t start = clock(), diff;
-  float *difference, *weight_device, *x_device, *y_device, *w0_device, *delta_device;// = (float *) malloc(sizeof(float) * SAMPLE_NUMBER);
+  int block_number = SAMPLE_NUMBER / THREAD_PER_BLOCK;
+  if (block_number == 0) {
+    block_number = 1;
+  }
+  int thread_number = SAMPLE_NUMBER;
+  if (thread_number > THREAD_PER_BLOCK) {
+    thread_number = THREAD_PER_BLOCK;
+  }
+
+  int block_number_weights = SAMPLE_ATTRIBUTE_NUMBER / THREAD_PER_BLOCK;
+  if (block_number_weights == 0) {
+    block_number_weights = 1;
+  }
+  int thread_number_weights = SAMPLE_ATTRIBUTE_NUMBER;
+  if (thread_number_weights > THREAD_PER_BLOCK) {
+    thread_number_weights = THREAD_PER_BLOCK;
+  }
+
+  float *difference, *weight_device, *x_device, *y_device, *w0_device, *delta_device, *weight_grid;// = (float *) malloc(sizeof(float) * SAMPLE_NUMBER);
   printf("Start memory alloc\n");
   cudaMalloc((void**)&difference, SAMPLE_NUMBER * sizeof(float));
   cudaMalloc((void**)&weight_device, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float));
@@ -141,6 +191,7 @@ int main() {
   cudaMalloc((void**)&x_device, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER * sizeof(float));
   cudaMalloc((void**)&y_device, SAMPLE_NUMBER * sizeof(float));
   cudaMalloc((void**)&w0_device, sizeof(float));
+  cudaMalloc((void**)&weight_grid, SAMPLE_ATTRIBUTE_NUMBER * block_number * sizeof(float));
   printf("Start memory copy\n");
   cudaMemcpy(x_device, x, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
 
@@ -155,29 +206,18 @@ int main() {
   thrust::device_vector<float*> delta_pointers(SAMPLE_NUMBER);
   thrust::transform(offset.begin(), offset.end(), delta_pointer.begin(), delta_pointers.begin(), offset_pointers());
 #ifdef DEBUG
+  printf("Block number:%d\n", block_number);
+  printf("Thread number:%d\n", thread_number);
   printf("Original weights:\n");
   output_device_vector(weight_device, SAMPLE_ATTRIBUTE_NUMBER);
 #endif
-  int block_number = SAMPLE_NUMBER / 64;
-  if (block_number == 0) {
-    block_number = 1;
-  }
-  int thread_number = SAMPLE_NUMBER;
-  if (thread_number > 64) {
-    thread_number = 64;
-  }
-
-  int block_number_weights = SAMPLE_ATTRIBUTE_NUMBER / 64;
-  if (block_number_weights == 0) {
-    block_number_weights = 1;
-  }
-  int thread_number_weights = SAMPLE_ATTRIBUTE_NUMBER;
-  if (thread_number_weights > 64) {
-    thread_number_weights = 64;
-  }
 
   for (int k = 0; k < ITERATION_NUMBER; k++) {
     calculate_difference<<<block_number,thread_number>>>(delta_device, difference, x_device, weight_device, w0_device, y_device);
+    cudaDeviceSynchronize();
+    reduce<<<block_number,thread_number>>>(delta_device, weight_grid);
+    cudaDeviceSynchronize();
+    block_reduce<<<block_number_weights,thread_number_weights>>>(weight_grid, weight_device, block_number);
     cudaDeviceSynchronize();
 #ifdef DEBUG
     printf("x:\n");
@@ -190,21 +230,33 @@ int main() {
       printf("delta %d:\n", i);
       output_device_vector(delta_pointers[i], SAMPLE_ATTRIBUTE_NUMBER);
     }
-
-#endif
-    float* newWeight = thrust::reduce(delta_pointers.begin(), delta_pointers.end(), weight_device, sum_delta());
-    cudaDeviceSynchronize();
-#ifdef DEBUG
-    printf("New weights:\n");
-    output_device_vector(newWeight, SAMPLE_ATTRIBUTE_NUMBER);
-#endif
-    copy_weight<<<block_number_weights, thread_number_weights>>>(weight_device, newWeight);
-    cudaDeviceSynchronize();
-#ifdef DEBUG
+//    for (int i = 2048; i < 2058; i++) {
+//      printf("delta %d:\n", i);
+//      output_device_vector(delta_pointers[i], SAMPLE_ATTRIBUTE_NUMBER);
+//    }
+//    for (int i = 4048; i < 4058; i++) {
+//      printf("delta %d:\n", i);
+//      output_device_vector(delta_pointers[i], SAMPLE_ATTRIBUTE_NUMBER);
+//    }
+//    for (int i = 6048; i < 6068; i++) {
+//      printf("delta %d:\n", i);
+//      output_device_vector(delta_pointers[i], SAMPLE_ATTRIBUTE_NUMBER);
+//    }
     printf("weight_device after update:\n");
     output_device_vector(weight_device, SAMPLE_ATTRIBUTE_NUMBER);
-    printf("\none cycle finished.\n\n\n");
 #endif
+//    float* newWeight = thrust::reduce(delta_pointers.begin(), delta_pointers.end(), weight_device, sum_delta());
+//    cudaDeviceSynchronize();
+//#ifdef DEBUG
+//    printf("New weights:\n");
+//    output_device_vector(newWeight, SAMPLE_ATTRIBUTE_NUMBER);
+//#endif
+//    copy_weight<<<block_number_weights, thread_number_weights>>>(weight_device, newWeight);
+//    cudaDeviceSynchronize();
+//#ifdef DEBUG
+
+//    printf("\none cycle finished.\n\n\n");
+//#endif
   }
   cudaMemcpy(weights, weight_device, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
   cudaFree(x_device);
