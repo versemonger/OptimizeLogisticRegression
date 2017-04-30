@@ -77,6 +77,8 @@ __global__ void calculate_difference(float* delta, float* difference, float* x, 
   }
 }
 
+
+
 __global__ void copy_weight(float* weight_device, float* new_weights) {
   for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER; i++) {
     weight_device[i] = new_weights[i];
