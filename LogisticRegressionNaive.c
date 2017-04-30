@@ -9,12 +9,12 @@
 #include <sys/time.h>
 
 #define MICROSEC_IN_SEC 1000000
-#define SAMPLE_NUMBER 1024 * 4
+#define SAMPLE_NUMBER 2048
 #define SAMPLE_ATTRIBUTE_NUMBER 32
 #define INITIAL_WEIGHTS_RANGE 0.01
 #define SAMPLE_VALUE_RANGE 50
 #define CONVERGE_RATE 0.0001
-#define ITERATION_NUMBER 6000 * 2
+#define ITERATION_NUMBER 12000
 #define DATA_NUMBER 4
 //#define DEBUG
 
@@ -53,25 +53,45 @@ float logisticFunction(float* x, float* w, int n) {
 }
 
 void updateDelta(float* delta, float** x, float* difference) {
+#ifdef DEBUG
+  printf("Delta:\n");
+#endif
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
     for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
       delta[j] += x[i][j] * CONVERGE_RATE * difference[i];
+#ifdef DEBUG
+      printf("%f\t", x[i][j] * CONVERGE_RATE * difference[i]);
+#endif
     }
   }
+#ifdef DEBUG
+  printf("\n\n");
+#endif
 }
 
 void updateWeights(float* weights, float** x, float* y) {
   float* difference = (float*)malloc(sizeof(float) * SAMPLE_NUMBER);
   // Calculate the difference according to logistic regression update formula
+#ifdef DEBUG
+  printf("Difference:\n");
+#endif
   for (int i = 0; i < SAMPLE_NUMBER; i++) {
     difference[i] = y[i] + logisticFunction(x[i], weights, SAMPLE_ATTRIBUTE_NUMBER) - 1;
+#ifdef DEBUG
+    printf("%f\t", difference[i]);
+#endif
   }
+#ifdef DEBUG
+  printf("\n\n");
+#endif
   // Calculate the delta vector according to the update formula
   float* delta = (float*)calloc(SAMPLE_ATTRIBUTE_NUMBER, sizeof(float));
   updateDelta(delta, x, difference);
   // add delta to the original weights
+  printf("Weights\n");
   for (int i = 1; i <= SAMPLE_ATTRIBUTE_NUMBER; i++) {
     weights[i] += delta[i - 1];
+    printf("%f\t", weights[i]);
   }
   free(delta);
   free(difference);

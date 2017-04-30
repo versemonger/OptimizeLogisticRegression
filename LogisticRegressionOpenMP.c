@@ -9,12 +9,12 @@
 #include <x86intrin.h>
 #include <omp.h>
 #include <sys/time.h>
-#define SAMPLE_NUMBER 1024 * 4
+#define SAMPLE_NUMBER (1024 * 4)
 #define SAMPLE_ATTRIBUTE_NUMBER 32
 #define INITIAL_WEIGHTS_RANGE 0.01
 #define SAMPLE_VALUE_RANGE 50
 #define CONVERGE_RATE 0.0001
-#define ITERATION_NUMBER 6000 * 2
+#define ITERATION_NUMBER (6000 * 2)
 #define DATA_NUMBER 8
 #define BYTE_NUMBER 32
 #define MICROSEC_IN_SEC 1000000

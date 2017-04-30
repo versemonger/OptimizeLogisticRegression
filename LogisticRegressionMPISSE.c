@@ -10,7 +10,7 @@
 #include <mpi/mpi.h>
 #include <sys/time.h>
 
-#define SAMPLE_NUMBER 1024 * 4
+#define SAMPLE_NUMBER (1024 * sample_number)
 #define SAMPLE_ATTRIBUTE_NUMBER 32
 #define INITIAL_WEIGHTS_RANGE 0.01
 #define SAMPLE_VALUE_RANGE 50
@@ -24,7 +24,7 @@
 
 int comm_sz; //Number of Processes
 int my_rank; //My process rank
-
+int sample_number = 0;
 /**
  *
  * @param n Length of the array.
@@ -67,26 +67,44 @@ float logisticFunction(float* x, float* w, int n, float w0) {
   return 1 / (1 + exp(w0 + dotProduct(x, w, n)));
 }
 
+float* temp;
+float* tempSum;
 void updateDelta(float **x, float *difference, __m128* weightsSSE) {
-  float* weights = (float*) weightsSSE;
+
+
+  __m128* tempSSE = (__m128*)temp;
+
+
+  __m128* tempSumSSE = (__m128*)tempSum;
+
   float converge_rate = CONVERGE_RATE;
-  int splitSize = SAMPLE_ATTRIBUTE_NUMBER / DATA_NUMBER / comm_sz;
-  int start = splitSize * my_rank;
+//  int splitSize = SAMPLE_ATTRIBUTE_NUMBER / DATA_NUMBER / comm_sz;
+//  int start = splitSize * my_rank;
+//  int end = start + splitSize;
+  int splitSize = SAMPLE_NUMBER / comm_sz;
+  int start = my_rank * splitSize;
   int end = start + splitSize;
-  for (int j = start; j < end; j++) {
-    for (int i = 0; i < SAMPLE_NUMBER; i++) {
+  for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER / DATA_NUMBER; j++) {
+    __m128 *xiSSE = (__m128*)x[start];
+    const __m128 multiplier = _mm_set1_ps(difference[start] * converge_rate);
+    tempSSE[j] = _mm_mul_ps(xiSSE[j], multiplier);
+    for (int i = start + 1; i < end; i++) {
       __m128 *xiSSE = (__m128*)x[i];
       const __m128 multiplier = _mm_set1_ps(difference[i] * converge_rate);
-      weightsSSE[j] = _mm_add_ps(weightsSSE[j], _mm_mul_ps(xiSSE[j], multiplier));
+      tempSSE[j] = _mm_add_ps(tempSSE[j], _mm_mul_ps(xiSSE[j], multiplier));
       //weightsSSE[j] = _mm256_fmadd_ps(xiSSE[j], multiplier, weightsSSE[j]);
     }
   }
-  MPI_Allgather(weights + start * DATA_NUMBER, splitSize * DATA_NUMBER, MPI_FLOAT, weights, splitSize * DATA_NUMBER, MPI_FLOAT, MPI_COMM_WORLD);
+  MPI_Allreduce(temp, tempSum, SAMPLE_ATTRIBUTE_NUMBER, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+  for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER / DATA_NUMBER; i++) {
+    weightsSSE[i] = _mm_add_ps(weightsSSE[i], tempSumSSE[i]);
+  }
+  //MPI_Allgather(weights + start * DATA_NUMBER, splitSize * DATA_NUMBER, MPI_FLOAT, weights, splitSize * DATA_NUMBER, MPI_FLOAT, MPI_COMM_WORLD);
 }
 
-void updateWeights(float* weights, float** x, float* y, float w0) {
+void updateWeights(float *difference, float* weights, float** x, float* y, float w0) {
 
-  float *difference = (float *) aligned_alloc(BYTE_NUMBER, sizeof(float) * SAMPLE_NUMBER);
+
   const __m128 minusOne = _mm_set1_ps(-1);
   __m128 *diffSSE = (__m128 *) difference;
   __m128 *ySSE = (__m128 *) y;
@@ -102,16 +120,22 @@ void updateWeights(float* weights, float** x, float* y, float w0) {
   for (int i = start / DATA_NUMBER; i < end / DATA_NUMBER; i++) {
     diffSSE[i] = _mm_add_ps(diffSSE[i], _mm_add_ps(ySSE[i], minusOne));
   }
-  MPI_Allgather(difference + start, splitSize, MPI_FLOAT, difference, splitSize, MPI_FLOAT, MPI_COMM_WORLD);
+  //MPI_Allgather(difference + start, splitSize, MPI_FLOAT, difference, splitSize, MPI_FLOAT, MPI_COMM_WORLD);
   // update and add delta to the original weights
   // function name is not changed for consistency
   updateDelta(x, difference, weightsSSE);
-  free(difference);
 }
 
 
 
-int main() {
+int main(int argc, char **argv) {
+
+  char* sample_number_string = argv[1];
+  sample_number += sample_number_string[0] - '0';
+  if (sample_number_string[1]) {
+    sample_number = 10 * sample_number + sample_number_string[1] - '0';
+  }
+
   srand(time(NULL));
   // initialize the weights randomly
   float w0 = (INITIAL_WEIGHTS_RANGE * rand() / RAND_MAX) - INITIAL_WEIGHTS_RANGE / 2;
@@ -143,9 +167,15 @@ int main() {
   MPI_Init(NULL, NULL);
   MPI_Comm_size(MPI_COMM_WORLD, &comm_sz);
   MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+  float *difference = (float *) aligned_alloc(BYTE_NUMBER, sizeof(float) * SAMPLE_NUMBER);
+  temp = (float*)aligned_alloc(BYTE_NUMBER, sizeof(float) * SAMPLE_ATTRIBUTE_NUMBER);
+  tempSum = (float*)aligned_alloc(BYTE_NUMBER, sizeof(float) * SAMPLE_ATTRIBUTE_NUMBER);
   for (int i = 0; i < ITERATION_NUMBER; i++) {
-    updateWeights(weights, x, y, w0);
+    updateWeights(difference, weights, x, y, w0);
   }
+  free(difference);
+  free(temp);
+  free(tempSum);
 
 #ifdef DEBUG
   for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER; i++) {
@@ -168,7 +198,7 @@ int main() {
   float totalError = 0;
   MPI_Reduce(&error, &totalError, 1, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
   if (my_rank == 0) {
-    printf("Average error:%lf\n", error / SAMPLE_NUMBER);
+    printf("Average error:%lf\n", totalError / SAMPLE_NUMBER);
     //int diff = gettimeofday() - start;
     //diff = clock() - start;
     gettimeofday(&tv, NULL);

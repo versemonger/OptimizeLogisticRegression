@@ -12,12 +12,12 @@
 #include <sys/time.h>
 //#include <fmaintrin.h>
 
-#define SAMPLE_NUMBER 1024 * 4
+#define SAMPLE_NUMBER (1024 * sample_number)
 #define SAMPLE_ATTRIBUTE_NUMBER 32
 #define INITIAL_WEIGHTS_RANGE 0.01
 #define SAMPLE_VALUE_RANGE 50
 #define CONVERGE_RATE 0.0001
-#define ITERATION_NUMBER 6000 * 2
+#define ITERATION_NUMBER (6000 * 2)
 #define DATA_NUMBER 8
 #define BYTE_NUMBER 32
 #define MICROSEC_IN_SEC 1000000
@@ -26,7 +26,7 @@
 
 int comm_sz; //Number of Processes
 int my_rank; //My process rank
-
+int sample_number = 0;
 /**
  *
  * @param n Length of the array.
@@ -111,8 +111,16 @@ void updateWeights(float* weights, float** x, float* y, float w0) {
 
 
 
-int main() {
+int main(int argc, char **argv) {
   srand(time(NULL));
+  char* sample_number_string = argv[1];
+  sample_number += sample_number_string[0] - '0';
+  if (sample_number_string[1]) {
+    sample_number = 10 * sample_number + sample_number_string[1] - '0';
+  }
+
+
+
   // initialize the weights randomly
   float w0 = (INITIAL_WEIGHTS_RANGE * rand() / RAND_MAX) - INITIAL_WEIGHTS_RANGE / 2;
   float* weights = generateRandomVectorFloat(SAMPLE_ATTRIBUTE_NUMBER, INITIAL_WEIGHTS_RANGE);
@@ -168,7 +176,7 @@ int main() {
   float totalError = 0;
   MPI_Reduce(&error, &totalError, 1, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
   if (my_rank == 0) {
-    printf("Average error:%lf\n", error / SAMPLE_NUMBER);
+    printf("Average error:%lf\n", totalError / SAMPLE_NUMBER);
     //int diff = gettimeofday() - start;
     //diff = clock() - start;
     gettimeofday(&tv, NULL);
