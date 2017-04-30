@@ -62,9 +62,9 @@ __host__ __device__ float logisticFunction(float* x, float* w, int n, float w0) 
   return 1 / (1 + exp(sum));
 }
 
-__global__ void calculate_difference(float* delta, float* difference, float* x, float* weights, float* w0, float* y) {
+__global__ void calculate_difference(float* delta, float* difference, float* x, float* weights, float w0, float* y) {
   int i = blockDim.x * blockIdx.x + threadIdx.x;
-  difference[i] = logisticFunction(x + i * SAMPLE_ATTRIBUTE_NUMBER, weights, SAMPLE_ATTRIBUTE_NUMBER, *w0) + y[i] - 1;
+  difference[i] = logisticFunction(x + i * SAMPLE_ATTRIBUTE_NUMBER, weights, SAMPLE_ATTRIBUTE_NUMBER, w0) + y[i] - 1;
   delta +=  i * SAMPLE_ATTRIBUTE_NUMBER;
   x += i * SAMPLE_ATTRIBUTE_NUMBER;
   for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
@@ -150,7 +150,7 @@ int main() {
     thread_number_weights = THREAD_PER_BLOCK;
   }
 
-  float *difference, *weight_device, *x_device, *y_device, *w0_device, *delta_device, *weight_grid;// = (float *) malloc(sizeof(float) * SAMPLE_NUMBER);
+  float *difference, *weight_device, *x_device, *y_device, *delta_device, *weight_grid;
   printf("Start memory alloc\t");
   gettimeofday(&tv, NULL);
   long diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
@@ -160,14 +160,12 @@ int main() {
   cudaMalloc((void**)&delta_device, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER * sizeof(float));
   cudaMalloc((void**)&x_device, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER * sizeof(float));
   cudaMalloc((void**)&y_device, SAMPLE_NUMBER * sizeof(float));
-  cudaMalloc((void**)&w0_device, sizeof(float));
   cudaMalloc((void**)&weight_grid, SAMPLE_ATTRIBUTE_NUMBER * block_number * sizeof(float));
   printf("Start memory copy\t");
   gettimeofday(&tv, NULL);
   diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
   printf("Time taken: %ld seconds %ld milliseconds\n", diff / 1000, diff % 1000);
   cudaMemcpy(x_device, x, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
-  cudaMemcpy(w0_device, &w0, sizeof(float), cudaMemcpyHostToDevice);
   cudaMemcpy(y_device, y, SAMPLE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
   cudaMemcpy(weight_device, weights, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
 #ifdef DEBUG
@@ -181,7 +179,7 @@ int main() {
   diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
   printf("Time taken: %ld seconds %ld milliseconds\n", diff / 1000, diff % 1000);
   for (int k = 0; k < ITERATION_NUMBER; k++) {
-    calculate_difference<<<block_number,thread_number>>>(delta_device, difference, x_device, weight_device, w0_device, y_device);
+    calculate_difference<<<block_number,thread_number>>>(delta_device, difference, x_device, weight_device, w0, y_device);
     cudaDeviceSynchronize();
     reduce<<<block_number,thread_number>>>(delta_device, weight_grid);
     cudaDeviceSynchronize();
@@ -207,7 +205,6 @@ int main() {
   cudaFree(y_device);
   cudaFree(weight_device);
   cudaFree(difference);
-  cudaFree(w0_device);
 #ifdef DEBUG
   for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER; i++) {
     printf("Benchmark weight: %lf Estimated weight:%lf\n", benchMarkWeights[i], weights[i]);
