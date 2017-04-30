@@ -3,12 +3,7 @@
  */
 
 #include <thrust/device_vector.h>
-#include <thrust/transform.h>
-#include <thrust/sequence.h>
 #include <thrust/copy.h>
-#include <thrust/fill.h>
-#include <thrust/replace.h>
-#include <thrust/functional.h>
 #include <iostream>
 
 #include <stdio.h>
@@ -111,41 +106,12 @@ __global__ void reduce(float* delta, float* weights_grid) {
   __syncthreads();
 }
 
-
-__global__ void copy_weight(float* weight_device, float* new_weights) {
-  for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER; i++) {
-    weight_device[i] = new_weights[i];
-  }
-}
-
-struct offset_pointers {
-    __device__ float* operator()(int offset, float* delta) {
-      return offset + delta;
-    }
-};
-
-struct sum_delta {
-    __device__ float* operator() (float* x, float* y) {
-      for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER; i++) {
-        *(x + i) += *(y + i);
-      }
-      return x;
-    }
-};
-
-
-
 int main() {
 
   srand(time(NULL));
   // initialize the weights randomly
   float w0 = (INITIAL_WEIGHTS_RANGE * rand() / RAND_MAX) - INITIAL_WEIGHTS_RANGE / 2;
   float* weights = generateRandomVectorFloat(SAMPLE_ATTRIBUTE_NUMBER, INITIAL_WEIGHTS_RANGE);
-  //TODO: delete this after debug
-  for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER; i++) {
-    weights[i] = 0;
-  }
-
 
   float* x = (float*)malloc(SAMPLE_NUMBER * SAMPLE_ATTRIBUTE_NUMBER * sizeof(float));
   x = generateRandomVectorFloat(SAMPLE_NUMBER * SAMPLE_ATTRIBUTE_NUMBER, SAMPLE_VALUE_RANGE);
@@ -184,7 +150,9 @@ int main() {
   }
 
   float *difference, *weight_device, *x_device, *y_device, *w0_device, *delta_device, *weight_grid;// = (float *) malloc(sizeof(float) * SAMPLE_NUMBER);
-  printf("Start memory alloc\n");
+  printf("Start memory alloc\t");
+  long diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
+  printf("Time taken: %ld seconds %ld milliseconds\n", diff / 1000, diff % 1000);
   cudaMalloc((void**)&difference, SAMPLE_NUMBER * sizeof(float));
   cudaMalloc((void**)&weight_device, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float));
   cudaMalloc((void**)&delta_device, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER * sizeof(float));
@@ -192,26 +160,22 @@ int main() {
   cudaMalloc((void**)&y_device, SAMPLE_NUMBER * sizeof(float));
   cudaMalloc((void**)&w0_device, sizeof(float));
   cudaMalloc((void**)&weight_grid, SAMPLE_ATTRIBUTE_NUMBER * block_number * sizeof(float));
-  printf("Start memory copy\n");
+  printf("Start memory copy\t");
+  diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
+  printf("Time taken: %ld seconds %ld milliseconds\n", diff / 1000, diff % 1000);
   cudaMemcpy(x_device, x, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
-
   cudaMemcpy(w0_device, &w0, sizeof(float), cudaMemcpyHostToDevice);
   cudaMemcpy(y_device, y, SAMPLE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
   cudaMemcpy(weight_device, weights, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
-  thrust::device_vector<int> offset(SAMPLE_NUMBER);
-  thrust::sequence(offset.begin(), offset.end(), 0, SAMPLE_ATTRIBUTE_NUMBER);
-  //thrust::copy(offset.begin(), offset.end(), std::ostream_iterator<int>(std::cout, "\n"));
-  thrust::device_vector<float*> delta_pointer(SAMPLE_NUMBER);
-  thrust::fill(delta_pointer.begin(), delta_pointer.end(), delta_device);
-  thrust::device_vector<float*> delta_pointers(SAMPLE_NUMBER);
-  thrust::transform(offset.begin(), offset.end(), delta_pointer.begin(), delta_pointers.begin(), offset_pointers());
 #ifdef DEBUG
   printf("Block number:%d\n", block_number);
   printf("Thread number:%d\n", thread_number);
   printf("Original weights:\n");
   output_device_vector(weight_device, SAMPLE_ATTRIBUTE_NUMBER);
 #endif
-
+  printf("Start calculation\t");
+  diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
+  printf("Time taken: %ld seconds %ld milliseconds\n", diff / 1000, diff % 1000);
   for (int k = 0; k < ITERATION_NUMBER; k++) {
     calculate_difference<<<block_number,thread_number>>>(delta_device, difference, x_device, weight_device, w0_device, y_device);
     cudaDeviceSynchronize();
@@ -230,33 +194,9 @@ int main() {
       printf("delta %d:\n", i);
       output_device_vector(delta_pointers[i], SAMPLE_ATTRIBUTE_NUMBER);
     }
-//    for (int i = 2048; i < 2058; i++) {
-//      printf("delta %d:\n", i);
-//      output_device_vector(delta_pointers[i], SAMPLE_ATTRIBUTE_NUMBER);
-//    }
-//    for (int i = 4048; i < 4058; i++) {
-//      printf("delta %d:\n", i);
-//      output_device_vector(delta_pointers[i], SAMPLE_ATTRIBUTE_NUMBER);
-//    }
-//    for (int i = 6048; i < 6068; i++) {
-//      printf("delta %d:\n", i);
-//      output_device_vector(delta_pointers[i], SAMPLE_ATTRIBUTE_NUMBER);
-//    }
     printf("weight_device after update:\n");
     output_device_vector(weight_device, SAMPLE_ATTRIBUTE_NUMBER);
 #endif
-//    float* newWeight = thrust::reduce(delta_pointers.begin(), delta_pointers.end(), weight_device, sum_delta());
-//    cudaDeviceSynchronize();
-//#ifdef DEBUG
-//    printf("New weights:\n");
-//    output_device_vector(newWeight, SAMPLE_ATTRIBUTE_NUMBER);
-//#endif
-//    copy_weight<<<block_number_weights, thread_number_weights>>>(weight_device, newWeight);
-//    cudaDeviceSynchronize();
-//#ifdef DEBUG
-
-//    printf("\none cycle finished.\n\n\n");
-//#endif
   }
   cudaMemcpy(weights, weight_device, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
   cudaFree(x_device);
@@ -280,7 +220,7 @@ int main() {
   }
   printf("Average error:%f\n", error / SAMPLE_NUMBER);
   gettimeofday(&tv, NULL);
-  long diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
+  diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
   printf("Time taken: %ld seconds %ld milliseconds\n", diff / 1000, diff % 1000);
   free(x);
   free(y);
