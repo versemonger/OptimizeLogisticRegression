@@ -65,11 +65,12 @@ __host__ __device__ float logisticFunction(float* x, float* w, int n, float w0) 
 __global__ void calculate_difference(float* delta, float* difference, float* x, float* weights, float* w0, float* y) {
   int i = blockDim.x * blockIdx.x + threadIdx.x;
   difference[i] = logisticFunction(x + i * SAMPLE_ATTRIBUTE_NUMBER, weights, SAMPLE_ATTRIBUTE_NUMBER, *w0) + y[i] - 1;
-  int delta_index_start = i * SAMPLE_ATTRIBUTE_NUMBER;
+  delta +=  i * SAMPLE_ATTRIBUTE_NUMBER;
+  x += i * SAMPLE_ATTRIBUTE_NUMBER;
   for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
     //TODO: modify this after debug
     //*(delta + delta_index_start + j) = 0.0001 * i;
-    *(delta + delta_index_start + j) = *(x + delta_index_start + j) * difference[i] * CONVERGE_RATE;
+    *(delta + j) = *(x + j) * difference[i] * CONVERGE_RATE;
   }
 }
 
@@ -151,6 +152,7 @@ int main() {
 
   float *difference, *weight_device, *x_device, *y_device, *w0_device, *delta_device, *weight_grid;// = (float *) malloc(sizeof(float) * SAMPLE_NUMBER);
   printf("Start memory alloc\t");
+  gettimeofday(&tv, NULL);
   long diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
   printf("Time taken: %ld seconds %ld milliseconds\n", diff / 1000, diff % 1000);
   cudaMalloc((void**)&difference, SAMPLE_NUMBER * sizeof(float));
@@ -161,6 +163,7 @@ int main() {
   cudaMalloc((void**)&w0_device, sizeof(float));
   cudaMalloc((void**)&weight_grid, SAMPLE_ATTRIBUTE_NUMBER * block_number * sizeof(float));
   printf("Start memory copy\t");
+  gettimeofday(&tv, NULL);
   diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
   printf("Time taken: %ld seconds %ld milliseconds\n", diff / 1000, diff % 1000);
   cudaMemcpy(x_device, x, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER * sizeof(float), cudaMemcpyHostToDevice);
@@ -174,6 +177,7 @@ int main() {
   output_device_vector(weight_device, SAMPLE_ATTRIBUTE_NUMBER);
 #endif
   printf("Start calculation\t");
+  gettimeofday(&tv, NULL);
   diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
   printf("Time taken: %ld seconds %ld milliseconds\n", diff / 1000, diff % 1000);
   for (int k = 0; k < ITERATION_NUMBER; k++) {
