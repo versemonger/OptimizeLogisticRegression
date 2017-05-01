@@ -13,16 +13,16 @@
 #include <sys/time.h>
 #include <cuda.h>
 #define THREAD_PER_BLOCK 512
-#define SAMPLE_NUMBER (1024 * 8)
-#define SAMPLE_ATTRIBUTE_NUMBER 32
+#define SAMPLE_NUMBER (8*1024)
+#define SAMPLE_ATTRIBUTE_NUMBER (32 * 32)
 #define INITIAL_WEIGHTS_RANGE 0.01
 #define SAMPLE_VALUE_RANGE 50
 #define CONVERGE_RATE 0.0001
-#define ITERATION_NUMBER 10000
+#define ITERATION_NUMBER 1000
 #define MICROSEC_IN_SEC 1000000
 
 //#define DEBUG
-
+//#define WEIGHT_ZERO
 /**
  *
  * @param n Length of the array.
@@ -67,8 +67,11 @@ __global__ void calculate_difference(float* delta, float* difference, float* x, 
   int tid = threadIdx.x;
   int i = blockDim.x * blockIdx.x + tid;
   if (tid < SAMPLE_ATTRIBUTE_NUMBER) {
-    shared_weights[tid] = weights[tid];
+    for (int j = 0; tid + j < SAMPLE_ATTRIBUTE_NUMBER; j += blockDim.x) {
+      shared_weights[tid + j] = weights[tid + j];
+    }
   }
+
   delta += i * SAMPLE_ATTRIBUTE_NUMBER;
   x += i * SAMPLE_ATTRIBUTE_NUMBER;
   __syncthreads();
@@ -79,7 +82,7 @@ __global__ void calculate_difference(float* delta, float* difference, float* x, 
 }
 
 __global__ void block_reduce(float *delta, float *weights, int block_number) {
-  int j = threadIdx.x;
+  int j = blockDim.x * blockIdx.x + threadIdx.x;
   for (int i = 0; i < block_number; i++) {
     weights[j] += *(delta + i * SAMPLE_ATTRIBUTE_NUMBER + j);
   }
@@ -108,7 +111,6 @@ __global__ void reduce(float* delta, float* weights_grid) {
       weights_grid[weight_start + j] += delta[delta_start + j];
     }
   }
-  __syncthreads();
 }
 
 int main() {
@@ -117,7 +119,11 @@ int main() {
   // initialize the weights randomly
   float w0 = (INITIAL_WEIGHTS_RANGE * rand() / RAND_MAX) - INITIAL_WEIGHTS_RANGE / 2;
   float* weights = generateRandomVectorFloat(SAMPLE_ATTRIBUTE_NUMBER, INITIAL_WEIGHTS_RANGE);
-
+#ifdef WEIGHT_ZERO
+  for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER; i++) {
+    weights[i] = 0;
+  }
+#endif
   float* x = (float*)malloc(SAMPLE_NUMBER * SAMPLE_ATTRIBUTE_NUMBER * sizeof(float));
   x = generateRandomVectorFloat(SAMPLE_NUMBER * SAMPLE_ATTRIBUTE_NUMBER, SAMPLE_VALUE_RANGE);
 
@@ -180,15 +186,10 @@ int main() {
 #endif
   printf("Start calculation\t");
   gettimeofday(&tv, NULL);
-  diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
-  printf("Time taken: %ld seconds %ld milliseconds\n", diff / 1000, diff % 1000);
+  long diff_start = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
+  printf("Time taken: %ld seconds %ld milliseconds\n", diff_start / 1000, diff_start % 1000);
   for (int k = 0; k < ITERATION_NUMBER; k++) {
     calculate_difference<<<block_number,thread_number>>>(delta_device, difference, x_device, weight_device, w0, y_device);
-    cudaDeviceSynchronize();
-    reduce<<<block_number,thread_number>>>(delta_device, weight_grid);
-    cudaDeviceSynchronize();
-    block_reduce<<<block_number_weights,thread_number_weights>>>(weight_grid, weight_device, block_number);
-    cudaDeviceSynchronize();
 #ifdef DEBUG
     printf("x:\n");
     output_device_vector(x, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER);
@@ -198,12 +199,22 @@ int main() {
     output_device_vector(difference, SAMPLE_NUMBER);
     for (int i = 0; i < 10; i++) {
       printf("delta %d:\n", i);
-      output_device_vector(delta_pointers[i], SAMPLE_ATTRIBUTE_NUMBER);
+      output_device_vector(delta_device + i * SAMPLE_ATTRIBUTE_NUMBER, SAMPLE_ATTRIBUTE_NUMBER);
     }
+#endif
+    reduce<<<block_number,thread_number>>>(delta_device, weight_grid);
+    block_reduce<<<block_number_weights,thread_number_weights>>>(weight_grid, weight_device, block_number);
+#ifdef DEBUG
     printf("weight_device after update:\n");
     output_device_vector(weight_device, SAMPLE_ATTRIBUTE_NUMBER);
 #endif
   }
+  printf("End calculation\t");
+  gettimeofday(&tv, NULL);
+  long diff_end = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
+  printf("Time taken: %ld seconds %ld milliseconds\n", diff_end / 1000, diff_end % 1000);
+  float calculation_time = (diff_end - diff_start) * 1.0 / ITERATION_NUMBER;
+  printf("Time taken by each kernel: %lf\n milliseconds",calculation_time);
   cudaMemcpy(weights, weight_device, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
   cudaFree(x_device);
   cudaFree(y_device);
@@ -224,6 +235,7 @@ int main() {
     error += fabs(predict - y[i]);
   }
   printf("Average error:%f\n", error / SAMPLE_NUMBER);
+  printf("Finish verification\t");
   gettimeofday(&tv, NULL);
   diff = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
   printf("Time taken: %ld seconds %ld milliseconds\n", diff / 1000, diff % 1000);
