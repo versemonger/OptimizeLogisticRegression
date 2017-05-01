@@ -62,7 +62,7 @@ __host__ __device__ float logisticFunction(float* x, float* w, int n, float w0){
   return 1 / (1 + exp(sum));
 }
 
-__global__ void calculate_difference(float* delta, float* difference, float* x, float* weights, float w0, float* y) {
+__global__ void calculate_difference(float* delta, float* difference, float* x, float* weights, float w0, float* y, float* weights_grid) {
   __shared__ float shared_weights[SAMPLE_ATTRIBUTE_NUMBER];
   int tid = threadIdx.x;
   int i = blockDim.x * blockIdx.x + tid;
@@ -71,13 +71,33 @@ __global__ void calculate_difference(float* delta, float* difference, float* x, 
       shared_weights[tid + j] = weights[tid + j];
     }
   }
-
   delta += i * SAMPLE_ATTRIBUTE_NUMBER;
   x += i * SAMPLE_ATTRIBUTE_NUMBER;
   __syncthreads();
   difference[i] = logisticFunction(x, shared_weights, SAMPLE_ATTRIBUTE_NUMBER, w0) + y[i] - 1;
   for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
     *(delta + j) = *(x + j) * difference[i] * CONVERGE_RATE;
+  }
+  __syncthreads();
+
+  int sum_holder_limit = blockDim.x / 2;
+  int sum_stride = blockDim.x / 2;
+  while (sum_stride > 0) {
+    if (tid < sum_holder_limit) {
+      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+        *(delta + j) += *(delta + sum_stride * SAMPLE_ATTRIBUTE_NUMBER + j);
+      }
+    }
+    sum_holder_limit /= 2;
+    sum_stride /= 2;
+    __syncthreads();
+  }
+  if (tid == 0) {
+    weights_grid += blockIdx.x * SAMPLE_ATTRIBUTE_NUMBER;
+    delta -= tid * SAMPLE_ATTRIBUTE_NUMBER;
+    for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+      weights_grid[j] += delta[j];
+    }
   }
 }
 
@@ -189,7 +209,7 @@ int main() {
   long diff_start = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
   printf("Time taken: %ld seconds %ld milliseconds\n", diff_start / 1000, diff_start % 1000);
   for (int k = 0; k < ITERATION_NUMBER; k++) {
-    calculate_difference<<<block_number,thread_number>>>(delta_device, difference, x_device, weight_device, w0, y_device);
+    calculate_difference<<<block_number,thread_number>>>(delta_device, difference, x_device, weight_device, w0, y_device, weight_grid);
 #ifdef DEBUG
     printf("x:\n");
     output_device_vector(x, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER);
@@ -202,7 +222,6 @@ int main() {
       output_device_vector(delta_device + i * SAMPLE_ATTRIBUTE_NUMBER, SAMPLE_ATTRIBUTE_NUMBER);
     }
 #endif
-    reduce<<<block_number,thread_number>>>(delta_device, weight_grid);
     block_reduce<<<block_number_weights,thread_number_weights>>>(weight_grid, weight_device, block_number);
 #ifdef DEBUG
     printf("weight_device after update:\n");
@@ -214,12 +233,13 @@ int main() {
   long diff_end = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
   printf("Time taken: %ld seconds %ld milliseconds\n", diff_end / 1000, diff_end % 1000);
   float calculation_time = (diff_end - diff_start) * 1.0 / ITERATION_NUMBER;
-  printf("Time taken by each kernel: %lf milliseconds \n",calculation_time);
+  printf("Time taken by each kernel: %lf milliseconds \n", calculation_time);
   cudaMemcpy(weights, weight_device, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
   cudaFree(x_device);
   cudaFree(y_device);
   cudaFree(weight_device);
   cudaFree(difference);
+  cudaFree(weight_grid);
 #ifdef DEBUG
   for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER; i++) {
     printf("Benchmark weight: %lf Estimated weight:%lf\n", benchMarkWeights[i], weights[i]);
