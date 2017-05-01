@@ -13,12 +13,12 @@
 #include <sys/time.h>
 #include <cuda.h>
 #define THREAD_PER_BLOCK 512
-#define SAMPLE_NUMBER (8*1024)
-#define SAMPLE_ATTRIBUTE_NUMBER (32 * 32)
+#define SAMPLE_NUMBER 32768
+#define SAMPLE_ATTRIBUTE_NUMBER 1024
 #define INITIAL_WEIGHTS_RANGE 0.01
 #define SAMPLE_VALUE_RANGE 50
 #define CONVERGE_RATE 0.0001
-#define ITERATION_NUMBER 700
+#define ITERATION_NUMBER 50
 #define MICROSEC_IN_SEC 1000000
 
 //#define DEBUG
@@ -62,7 +62,7 @@ __host__ __device__ float logisticFunction(float* x, float* w, int n, float w0){
   return 1 / (1 + exp(sum));
 }
 
-__global__ void calculate_difference(float* delta, float* difference, float* x, float* weights, float w0, float* y, float* weights_grid) {
+template <unsigned int block_size> __global__ void calculate_difference(float* delta, float* difference, float* x, float* weights, float w0, float* y, float* weights_grid) {
   __shared__ float shared_weights[SAMPLE_ATTRIBUTE_NUMBER];
   int tid = threadIdx.x;
   int i = blockDim.x * blockIdx.x + tid;
@@ -79,19 +79,143 @@ __global__ void calculate_difference(float* delta, float* difference, float* x, 
     *(delta + j) = *(x + j) * difference[i] * CONVERGE_RATE;
   }
   __syncthreads();
-
-  int sum_holder_limit = blockDim.x / 2;
-  int sum_stride = blockDim.x / 2;
-  while (sum_stride > 0) {
-    if (tid < sum_holder_limit) {
+  int stride = 0;
+    if (tid < 256) {
+      stride = 256 * SAMPLE_ATTRIBUTE_NUMBER;
       for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
-        *(delta + j) += *(delta + sum_stride * SAMPLE_ATTRIBUTE_NUMBER + j);
+        delta[j] += delta[stride + j];
       }
+      __syncthreads();
     }
-    sum_holder_limit /= 2;
-    sum_stride /= 2;
-    __syncthreads();
+
+    if (tid < 128) {
+      stride = 128 * SAMPLE_ATTRIBUTE_NUMBER;
+      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+        delta[j] += delta[stride + j];
+      }
+      __syncthreads();
+    }
+
+    if (tid < 64) {
+      stride = 64 * SAMPLE_ATTRIBUTE_NUMBER;
+      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+        delta[j] += delta[stride + j];
+      }
+      __syncthreads();
+    }
+
+
+  if (tid < 32) {
+      stride = 32 * SAMPLE_ATTRIBUTE_NUMBER;
+      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+        delta[j] += delta[stride + j];
+      }
+
+      stride = 16 * SAMPLE_ATTRIBUTE_NUMBER;
+      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+        delta[j] += delta[stride + j];
+      }
+
+      stride = 8 * SAMPLE_ATTRIBUTE_NUMBER;
+      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+        delta[j] += delta[stride + j];
+      }
+
+      stride = 4 * SAMPLE_ATTRIBUTE_NUMBER;
+      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+        delta[j] += delta[stride + j];
+      }
+
+      stride = 2 * SAMPLE_ATTRIBUTE_NUMBER;
+      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+        delta[j] += delta[stride + j];
+      }
+
+      stride = SAMPLE_ATTRIBUTE_NUMBER;
+      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+        delta[j] += delta[stride + j];
+    }
   }
+//  if (block_size >= 512) {
+//    if (tid < 256) {
+//      stride = 256 * SAMPLE_ATTRIBUTE_NUMBER;
+//      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+//        delta[j] += delta[stride + j];
+//      }
+//      __syncthreads();
+//    }
+//  }
+//  if (block_size >= 256) {
+//    if (tid < 128) {
+//      stride = 128 * SAMPLE_ATTRIBUTE_NUMBER;
+//      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+//        delta[j] += delta[stride + j];
+//      }
+//      __syncthreads();
+//    }
+//  }
+//  if (block_size >= 128) {
+//    if (tid < 64) {
+//      stride = 64 * SAMPLE_ATTRIBUTE_NUMBER;
+//      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+//        delta[j] += delta[stride + j];
+//      }
+//      __syncthreads();
+//    }
+//  }
+//
+//  if (tid < 32) {
+//    if (block_size >= 64) {
+//      stride = 32 * SAMPLE_ATTRIBUTE_NUMBER;
+//      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+//        delta[j] += delta[stride + j];
+//      }
+//    }
+//    if (block_size >= 32) {
+//      stride = 16 * SAMPLE_ATTRIBUTE_NUMBER;
+//      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+//        delta[j] += delta[stride + j];
+//      }
+//    }
+//    if (block_size >= 16) {
+//      stride = 8 * SAMPLE_ATTRIBUTE_NUMBER;
+//      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+//        delta[j] += delta[stride + j];
+//      }
+//    }
+//    if (block_size >= 8) {
+//      stride = 4 * SAMPLE_ATTRIBUTE_NUMBER;
+//      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+//        delta[j] += delta[stride + j];
+//      }
+//    }
+//    if (block_size >= 4) {
+//      stride = 2 * SAMPLE_ATTRIBUTE_NUMBER;
+//      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+//        delta[j] += delta[stride + j];
+//      }
+//    }
+//    if (block_size >= 2) {
+//      stride = SAMPLE_ATTRIBUTE_NUMBER;
+//      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+//        delta[j] += delta[stride + j];
+//      }
+//    }
+//  }
+
+
+//  int sum_holder_limit = blockDim.x / 2;
+//  int sum_stride = blockDim.x / 2;
+//  while (sum_stride > 0) {
+//    if (tid < sum_holder_limit) {
+//      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
+//        *(delta + j) += *(delta + sum_stride * SAMPLE_ATTRIBUTE_NUMBER + j);
+//      }
+//    }
+//    sum_holder_limit /= 2;
+//    sum_stride /= 2;
+//    __syncthreads();
+//  }
   if (tid == 0) {
     weights_grid += blockIdx.x * SAMPLE_ATTRIBUTE_NUMBER;
     delta -= tid * SAMPLE_ATTRIBUTE_NUMBER;
@@ -105,31 +229,6 @@ __global__ void block_reduce(float *delta, float *weights, int block_number) {
   int j = blockDim.x * blockIdx.x + threadIdx.x;
   for (int i = 0; i < block_number; i++) {
     weights[j] += *(delta + i * SAMPLE_ATTRIBUTE_NUMBER + j);
-  }
-}
-
-__global__ void reduce(float* delta, float* weights_grid) {
-  int i = blockDim.x * blockIdx.x + threadIdx.x;
-  int tid = threadIdx.x;
-  int sum_holder_limit = blockDim.x / 2;
-  int sum_stride = blockDim.x / 2;
-  float* delta_temp = delta + i * SAMPLE_ATTRIBUTE_NUMBER;
-  while (sum_stride > 0) {
-    if (tid < sum_holder_limit) {
-      for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
-        *(delta_temp + j) += *(delta_temp + sum_stride * SAMPLE_ATTRIBUTE_NUMBER + j);
-      }
-    }
-    sum_holder_limit /= 2;
-    sum_stride /= 2;
-    __syncthreads();
-  }
-  if (tid == 0) {
-    int weight_start = blockIdx.x * SAMPLE_ATTRIBUTE_NUMBER;
-    int delta_start = blockDim.x * blockIdx.x * SAMPLE_ATTRIBUTE_NUMBER;
-    for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
-      weights_grid[weight_start + j] += delta[delta_start + j];
-    }
   }
 }
 
@@ -209,7 +308,7 @@ int main() {
   long diff_start = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
   printf("Time taken: %ld seconds %ld milliseconds\n", diff_start / 1000, diff_start % 1000);
   for (int k = 0; k < ITERATION_NUMBER; k++) {
-    calculate_difference<<<block_number,thread_number>>>(delta_device, difference, x_device, weight_device, w0, y_device, weight_grid);
+    calculate_difference<THREAD_PER_BLOCK><<<block_number,thread_number>>>(delta_device, difference, x_device, weight_device, w0, y_device, weight_grid);
 #ifdef DEBUG
     printf("x:\n");
     output_device_vector(x, SAMPLE_ATTRIBUTE_NUMBER * SAMPLE_NUMBER);
