@@ -18,7 +18,7 @@
 #define INITIAL_WEIGHTS_RANGE 0.01
 #define SAMPLE_VALUE_RANGE 50
 #define CONVERGE_RATE 0.0001
-#define ITERATION_NUMBER 1000
+#define ITERATION_NUMBER 700
 #define MICROSEC_IN_SEC 1000000
 
 //#define DEBUG
@@ -214,7 +214,7 @@ int main() {
   long diff_end = (tv.tv_sec * MICROSEC_IN_SEC + tv.tv_usec - start) / 1000;
   printf("Time taken: %ld seconds %ld milliseconds\n", diff_end / 1000, diff_end % 1000);
   float calculation_time = (diff_end - diff_start) * 1.0 / ITERATION_NUMBER;
-  printf("Time taken by each kernel: %lf\n milliseconds",calculation_time);
+  printf("Time taken by each kernel: %lf milliseconds \n",calculation_time);
   cudaMemcpy(weights, weight_device, SAMPLE_ATTRIBUTE_NUMBER * sizeof(float), cudaMemcpyDeviceToHost);
   cudaFree(x_device);
   cudaFree(y_device);
