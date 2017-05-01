@@ -64,16 +64,15 @@ __host__ __device__ float logisticFunction(float* x, float* w, int n, float w0){
 
 __global__ void calculate_difference(float* delta, float* difference, float* x, float* weights, float w0, float* y) {
   __shared__ float shared_weights[SAMPLE_ATTRIBUTE_NUMBER];
-  int i = blockDim.x * blockIdx.x + threadIdx.x;
-  if (threadIdx.x == 0) {
-    for (int i = 0; i < SAMPLE_ATTRIBUTE_NUMBER; i++) {
-      shared_weights[i] = weights[i];
-    }
+  int tid = threadIdx.x;
+  int i = blockDim.x * blockIdx.x + tid;
+  if (tid < SAMPLE_ATTRIBUTE_NUMBER) {
+    shared_weights[tid] = weights[tid];
   }
   delta += i * SAMPLE_ATTRIBUTE_NUMBER;
   x += i * SAMPLE_ATTRIBUTE_NUMBER;
   __syncthreads();
-  difference[i] = logisticFunction(x, weights, SAMPLE_ATTRIBUTE_NUMBER, w0) + y[i] - 1;
+  difference[i] = logisticFunction(x, shared_weights, SAMPLE_ATTRIBUTE_NUMBER, w0) + y[i] - 1;
   for (int j = 0; j < SAMPLE_ATTRIBUTE_NUMBER; j++) {
     *(delta + j) = *(x + j) * difference[i] * CONVERGE_RATE;
   }
